@@ -5,134 +5,286 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Exec Stream - OpenClaw 命令监控</title>
   <style>
+    :root {
+      --bg: #1e1e1e;
+      --bg-elevated: #252526;
+      --panel: #2d2d2d;
+      --panel-hover: #3a3a3a;
+      --border: #3e3e42;
+      --text: #d4d4d4;
+      --muted: #858585;
+      --accent: #4ec9b0;
+      --primary: #0e639c;
+      --primary-hover: #1177bb;
+      --danger: #f48771;
+      --success: #89d185;
+      --shadow: rgba(0, 0, 0, 0.28);
+    }
+
+    :root[data-theme="light"] {
+      --bg: #ffffff;
+      --bg-elevated: #f7f7f7;
+      --panel: #f3f3f3;
+      --panel-hover: #e8e8e8;
+      --border: #d9d9d9;
+      --text: #1e1e1e;
+      --muted: #666666;
+      --accent: #0f7b6c;
+      --primary: #0e639c;
+      --primary-hover: #1177bb;
+      --danger: #c93c2f;
+      --success: #2f855a;
+      --shadow: rgba(0, 0, 0, 0.12);
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
+
     body {
       font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-      background: #1e1e1e;
-      color: #d4d4d4;
+      background: var(--bg);
+      color: var(--text);
       height: 100vh;
       display: flex;
       flex-direction: column;
+      transition: background 0.2s ease, color 0.2s ease;
     }
+
     .header {
-      background: #2d2d2d;
+      background: var(--panel);
       padding: 12px 20px;
-      border-bottom: 1px solid #3e3e3e;
+      border-bottom: 1px solid var(--border);
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 16px;
+      transition: background 0.2s ease, border-color 0.2s ease;
     }
+
     .header h1 {
       font-size: 16px;
-      color: #4ec9b0;
+      color: var(--accent);
+      white-space: nowrap;
     }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    button {
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    }
+
+    .history-btn {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    .history-btn:hover,
+    .copy-btn:hover {
+      background: var(--primary-hover);
+    }
+
+    .theme-btn,
+    .lang-btn {
+      min-width: 44px;
+      background: var(--bg-elevated);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    .theme-btn:hover,
+    .lang-btn:hover,
+    .toggle-btn:hover {
+      background: var(--panel-hover);
+    }
+
     .status {
       display: flex;
       align-items: center;
       gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
     }
+
     .status-dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: #f48771;
+      background: var(--danger);
     }
-    .status-dot.connected { background: #89d185; }
-    
-    /* 授权码界面 */
+
+    .status-dot.connected { background: var(--success); }
+    .status-dot.waiting { background: #e2c08d; }
+
     .auth-container {
       display: none;
       flex: 1;
       align-items: center;
       justify-content: center;
-      background: #1e1e1e;
+      background: var(--bg);
+      padding: 24px;
     }
+
     .auth-box {
-      background: #2d2d2d;
-      padding: 40px;
-      border-radius: 8px;
+      width: min(520px, 100%);
+      background: var(--panel);
+      padding: 36px;
+      border-radius: 12px;
       text-align: center;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      box-shadow: 0 10px 30px var(--shadow);
+      border: 1px solid var(--border);
     }
+
     .auth-title {
       font-size: 18px;
-      color: #4ec9b0;
-      margin-bottom: 24px;
+      color: var(--accent);
+      margin-bottom: 20px;
     }
+
     .auth-code {
-      font-size: 48px;
+      font-size: clamp(36px, 8vw, 52px);
       font-weight: bold;
-      color: #d4d4d4;
+      color: var(--text);
       letter-spacing: 8px;
       margin: 24px 0;
       font-family: 'Monaco', 'Menlo', monospace;
     }
+
     .auth-hint {
-      color: #858585;
+      color: var(--muted);
       font-size: 13px;
       margin-top: 16px;
+      line-height: 1.6;
     }
+
     .copy-btn {
-      background: #0e639c;
-      color: white;
+      background: var(--primary);
+      color: #fff;
       border: none;
       padding: 10px 24px;
       border-radius: 4px;
-      cursor: pointer;
       font-size: 14px;
       margin-top: 16px;
     }
-    .copy-btn:hover {
-      background: #1177bb;
-    }
-    
-    /* 终端界面 */
+
     .terminal {
       flex: 1;
       padding: 20px;
       overflow-y: auto;
       font-size: 13px;
       line-height: 1.6;
+      background: var(--bg);
     }
+
     .command {
-      color: #4ec9b0;
+      color: var(--accent);
       margin-bottom: 4px;
+      word-break: break-word;
     }
+
     .output {
-      color: #d4d4d4;
+      color: var(--text);
       white-space: pre-wrap;
       margin-bottom: 16px;
+      word-break: break-word;
     }
-    .output.error { color: #f48771; }
+
+    .output.error { color: var(--danger); }
+
+    .output-container {
+      margin-bottom: 16px;
+    }
+
+    .collapsible {
+      position: relative;
+      transition: max-height 0.25s ease;
+    }
+
+    .collapsible.collapsed::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 36px;
+      background: linear-gradient(to bottom, rgba(0, 0, 0, 0), var(--bg));
+      pointer-events: none;
+    }
+
+    :root[data-theme="light"] .collapsible.collapsed::after {
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0), var(--bg));
+    }
+
+    .toggle-btn {
+      background: var(--bg-elevated);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin-top: 4px;
+    }
+
     .meta {
-      color: #858585;
+      color: var(--muted);
       font-size: 11px;
       margin-bottom: 8px;
+    }
+
+    @media (max-width: 780px) {
+      .header {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .header-actions {
+        justify-content: space-between;
+      }
+
+      .status {
+        margin-left: auto;
+      }
     }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>🖥️ Exec Stream</h1>
-    <div class="status">
-      <div class="status-dot" id="statusDot"></div>
-      <span id="statusText">未连接</span>
+    <div class="header-actions">
+      <button class="history-btn" id="historyBtn" onclick="loadHistory()">📜 历史命令</button>
+      <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">☀️</button>
+      <button class="lang-btn" id="langBtn" onclick="toggleLang()">EN</button>
+      <div class="status">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">未连接</span>
+      </div>
     </div>
   </div>
-  
-  <!-- 授权码界面 -->
+
   <div class="auth-container" id="authContainer">
     <div class="auth-box">
-      <div class="auth-title">请授权访问</div>
+      <div class="auth-title" id="authTitle">请授权访问</div>
       <div class="auth-code" id="authCode">------</div>
-      <button class="copy-btn" onclick="copyAuthCode()">📋 复制授权码</button>
-      <div class="auth-hint">将授权码发送给 OpenClaw 完成授权</div>
+      <button class="copy-btn" onclick="copyAuthCode()">📋 复制授权口令</button>
+      <div class="auth-hint" id="authHint">将授权口令发送给 OpenClaw 完成授权</div>
     </div>
   </div>
-  
-  <!-- 终端界面 -->
+
   <div class="terminal" id="terminal"></div>
-  
+
   <script src="app.js"></script>
 </body>
 </html>

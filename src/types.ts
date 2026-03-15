@@ -11,8 +11,8 @@ export interface ExecEvent {
 }
 
 export interface WebSocketMessage {
-  type: 'exec_start' | 'exec_output' | 'exec_end';
-  data: ExecEvent;
+  type: 'exec_start' | 'exec_output' | 'exec_end' | 'auth_success' | 'pong';
+  data?: ExecEvent | { message?: string; token?: string };
 }
 
 export interface PluginConfig {

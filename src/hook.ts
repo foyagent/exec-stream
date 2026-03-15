@@ -37,15 +37,11 @@ type PluginAPI = {
 export class ExecStreamHook {
   private static clients: Set<any> = new Set();
   private static api: PluginAPI;
-
-  // 用 runId + toolCallId 关联 before/update/after 三个阶段，避免依赖不存在的 event.context 透传。
   private static activeExecs: Map<string, ActiveExecState> = new Map();
 
   static register(api: PluginAPI) {
     this.api = api;
 
-    // 订阅全局 agent event，用于接收 exec 工具的实时 partialResult。
-    // OpenClaw 会在 tool/update 阶段提供 details.tail（累计尾部输出），这里做增量切片后广播给前端。
     api.runtime?.events?.onAgentEvent?.((event: AgentEventPayload) => {
       this.handleAgentEvent(event);
     });
@@ -91,21 +87,6 @@ export class ExecStreamHook {
       const state = this.activeExecs.get(toolKey);
       const extracted = this.extractExecResult(event.result);
 
-      if (event.result && typeof event.result === 'object') {
-        api.logger.info('[exec-stream] result keys: ' + Object.keys(event.result).join(','));
-      } else {
-        api.logger.warn('[exec-stream] exec result is empty or non-object');
-      }
-
-      api.logger.info(
-        '[exec-stream] mapped result: ' +
-          JSON.stringify({
-            exitCode: extracted.exitCode,
-            stdoutLength: extracted.stdout?.length || 0,
-            stderrLength: extracted.stderr?.length || 0
-          })
-      );
-
       const execEvent: ExecEvent = {
         sessionId: state?.sessionId || api.runtime?.sessionId || 'unknown',
         execId: state?.execId || this.generateExecId(),
@@ -123,7 +104,18 @@ export class ExecStreamHook {
         data: execEvent
       });
 
+      const { ExecStreamServer } = require('./server');
+      ExecStreamServer.addCommandToCache(execEvent);
       this.activeExecs.delete(toolKey);
+    });
+
+    const messageHandler = (event: any) => this.handleMessage(event);
+    ['message', 'message_received', 'chat_message', 'user_message'].forEach(eventName => {
+      try {
+        api.on(eventName, messageHandler);
+      } catch {
+        // ignore unsupported message hooks
+      }
     });
   }
 
@@ -170,9 +162,6 @@ export class ExecStreamHook {
     const record = this.asRecord(result);
     const details = this.asRecord(record?.details);
 
-    // OpenClaw exec 的最终结构主要是：
-    // result.details = { status, exitCode, durationMs, aggregated, cwd }
-    // 旧逻辑读 stdout/stderr/exitCode，会拿不到真正输出。
     const stdout =
       this.asOptionalString(record?.stdout) ||
       this.asOptionalString(details?.aggregated) ||
@@ -242,35 +231,52 @@ export class ExecStreamHook {
     return `exec_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   }
 
-  // 处理消息，识别授权码
   private static handleMessage(event: any) {
-    const content = event.content || event.text || '';
-    if (typeof content !== 'string') return;
-    
-    // 匹配六位数授权码
-    const match = content.match(/\b(\d{6})\b/);
+    const content = this.extractMessageText(event);
+    if (!content) return;
+
+    const match = content.match(/(?:^|\s)\/?exec-stream\s+auth\s+(\d{6})(?:\s|$)/i);
     if (!match) return;
-    
+
     const code = match[1];
-    this.api.logger.info(`[exec-stream] Detected auth code: ${code}`);
-    
-    // 调用验证 API
+    this.api.logger.info(`[exec-stream] Detected auth phrase: ${code}`);
+
     const { ExecStreamServer } = require('./server');
     const result = ExecStreamServer.verifyCode(code);
-    
+
     if (result.success) {
-      this.api.logger.info(`[exec-stream] Auth code verified: ${code}`);
-      // 广播授权成功消息
+      this.api.logger.info(`[exec-stream] Auth code verified from chat: ${code}`);
       this.broadcast({
         type: 'auth_success',
         data: { message: '授权成功！', token: result.token }
-      });
+      } as WebSocketMessage | any);
     } else {
-      this.api.logger.warn(`[exec-stream] Auth code invalid: ${code}`);
+      this.api.logger.warn(`[exec-stream] Auth phrase invalid: ${code}`);
     }
   }
 
-  static broadcast(message: WebSocketMessage) {
+  private static extractMessageText(event: any): string {
+    if (!event) return '';
+    const candidates = [
+      event.content,
+      event.text,
+      event.message,
+      event.body?.content,
+      event.payload?.content,
+      event.data?.content,
+      event.data?.text
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate;
+      }
+    }
+
+    return '';
+  }
+
+  static broadcast(message: WebSocketMessage | any) {
     const data = JSON.stringify(message);
     this.clients.forEach(ws => {
       try {

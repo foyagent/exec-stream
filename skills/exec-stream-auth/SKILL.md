@@ -1,44 +1,40 @@
-# Exec Stream 授权码处理
+# Exec Stream Auth
 
-## 触发条件
-当用户消息匹配以下格式时触发：
-- `/exec-stream auth <6位数字>`
-- `exec-stream auth <6位数字>`
-- `Exec Stream 授权码: <6位数字>`
+当用户发送以下标准化授权口令时，识别并完成 Exec Stream Web UI 授权：
 
-## 功能
-识别 Exec Stream 插件的授权码，调用本地验证 API 完成授权。
-
-## 执行步骤
-
-1. **提取授权码**
-   - 从消息中提取 6 位数字授权码
-
-2. **调用验证 API**
-   ```bash
-   curl -X POST http://localhost:9200/exec-stream/auth/verify \
-     -H "Content-Type: application/json" \
-     -d "{\"code\":\"<授权码>\"}"
-   ```
-
-3. **处理结果**
-   - 如果成功：回复"✅ Exec Stream 授权成功！Token 有效期 48 小时。"
-   - 如果失败：回复"❌ 授权码无效或已过期，请重新获取。"
-
-## 示例
-
-**用户输入**：
-```
+```text
 /exec-stream auth 123456
 ```
 
-**Bot 回复**：
+## 匹配规则
+
+仅匹配以下格式：
+- `/exec-stream auth <6位数字>`
+- `exec-stream auth <6位数字>`
+
+正则建议：
+```regex
+(?:^|\s)\/?exec-stream\s+auth\s+(\d{6})(?:\s|$)
 ```
-✅ Exec Stream 授权成功！Token 有效期 48 小时。
+
+## 处理步骤
+
+1. 提取 6 位数字授权码。
+2. 调用本地验证 API：
+
+```bash
+curl -X POST http://localhost:9200/exec-stream/auth/verify \
+  -H "Content-Type: application/json" \
+  -d '{"code":"123456"}'
 ```
+
+3. 根据结果回复：
+   - 成功：`✅ Exec Stream 授权成功！Token 有效期 48 小时。`
+   - 失败：`❌ 授权码无效或已过期，请重新获取。`
 
 ## 注意事项
 
-- 授权码 5 分钟内有效
-- 一次性使用，验证后立即失效
-- 需要 Exec Stream 插件已启动（端口 9200）
+- 授权码有效期 5 分钟
+- 授权码一次性使用，验证后立即失效
+- 需要 Exec Stream 插件已运行在本地 9200 端口
+- Web UI 复制按钮应复制完整标准口令，而不是裸 6 位数字
