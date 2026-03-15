@@ -1,0 +1,25 @@
+{
+  "id": "exec-stream",
+  "name": "Exec Stream",
+  "description": "实时展示 OpenClaw 命令执行过程",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "port": {
+        "type": "number",
+        "default": 9200,
+        "description": "WebSocket 服务端口"
+      },
+      "jwtSecret": {
+        "type": "string",
+        "description": "JWT 签名密钥（建议使用 SecretRef）"
+      },
+      "tokenExpiry": {
+        "type": "number",
+        "default": 86400,
+        "description": "Token 有效期（秒），默认 24h"
+      }
+    }
+  }
+}

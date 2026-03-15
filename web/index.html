@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exec Stream - OpenClaw 命令监控</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      background: #2d2d2d;
+      padding: 12px 20px;
+      border-bottom: 1px solid #3e3e3e;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header h1 {
+      font-size: 16px;
+      color: #4ec9b0;
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #f48771;
+    }
+    .status-dot.connected { background: #89d185; }
+    
+    /* 授权码界面 */
+    .auth-container {
+      display: none;
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+      background: #1e1e1e;
+    }
+    .auth-box {
+      background: #2d2d2d;
+      padding: 40px;
+      border-radius: 8px;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .auth-title {
+      font-size: 18px;
+      color: #4ec9b0;
+      margin-bottom: 24px;
+    }
+    .auth-code {
+      font-size: 48px;
+      font-weight: bold;
+      color: #d4d4d4;
+      letter-spacing: 8px;
+      margin: 24px 0;
+      font-family: 'Monaco', 'Menlo', monospace;
+    }
+    .auth-hint {
+      color: #858585;
+      font-size: 13px;
+      margin-top: 16px;
+    }
+    .copy-btn {
+      background: #0e639c;
+      color: white;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-top: 16px;
+    }
+    .copy-btn:hover {
+      background: #1177bb;
+    }
+    
+    /* 终端界面 */
+    .terminal {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .command {
+      color: #4ec9b0;
+      margin-bottom: 4px;
+    }
+    .output {
+      color: #d4d4d4;
+      white-space: pre-wrap;
+      margin-bottom: 16px;
+    }
+    .output.error { color: #f48771; }
+    .meta {
+      color: #858585;
+      font-size: 11px;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🖥️ Exec Stream</h1>
+    <div class="status">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">未连接</span>
+    </div>
+  </div>
+  
+  <!-- 授权码界面 -->
+  <div class="auth-container" id="authContainer">
+    <div class="auth-box">
+      <div class="auth-title">请授权访问</div>
+      <div class="auth-code" id="authCode">------</div>
+      <button class="copy-btn" onclick="copyAuthCode()">📋 复制授权码</button>
+      <div class="auth-hint">将授权码发送给 OpenClaw 完成授权</div>
+    </div>
+  </div>
+  
+  <!-- 终端界面 -->
+  <div class="terminal" id="terminal"></div>
+  
+  <script src="app.js"></script>
+</body>
+</html>

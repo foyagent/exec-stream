@@ -1,0 +1,32 @@
+# Source files (keep for jiti runtime)
+# *.ts
+
+# Tests
+test/
+tests/
+*.test.ts
+*.spec.ts
+
+# Development
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation (keep README.md)
+docs/
+
+# Git
+.git/
+.gitignore
+
+# OpenClaw
+.openclaw/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
