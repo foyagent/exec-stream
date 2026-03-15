@@ -12,6 +12,7 @@ export class ExecStreamServer {
   private static webDir: string;
   private static api: any;
   private static jwtSecret: string;
+  private static tokenExpirySeconds: number;
   
   // 授权码存储：code -> { deviceId, createdAt }
   private static authCodes: Map<string, { deviceId: string; createdAt: number }> = new Map();
@@ -21,6 +22,7 @@ export class ExecStreamServer {
   static register(api: any, config: PluginConfig) {
     const port = config.port || 9200;
     this.jwtSecret = config.jwtSecret || 'default-secret-change-me';
+    this.tokenExpirySeconds = config.tokenExpiry || 172800;
     this.api = api;
     
     // 获取 web 目录路径
@@ -234,7 +236,7 @@ export class ExecStreamServer {
         const token = jwt.sign(
           { sub: authData.deviceId, permissions: ['exec:read'] },
           this.jwtSecret,
-          { expiresIn: '24h' }
+          { expiresIn: this.tokenExpirySeconds }
         );
         
         // 保存已授权设备
@@ -292,7 +294,7 @@ export class ExecStreamServer {
     const token = jwt.sign(
       { sub: authData.deviceId, permissions: ['exec:read'] },
       this.jwtSecret,
-      { expiresIn: '24h' }
+      { expiresIn: this.tokenExpirySeconds }
     );
     
     // 保存已授权设备

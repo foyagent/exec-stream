@@ -15,7 +15,7 @@
 ### 通过 npm 安装（推荐）
 
 ```bash
-npm install @openclaw/exec-stream
+npm install openclaw-exec-stream
 ```
 
 ### 手动安装
@@ -55,7 +55,7 @@ openclaw gateway restart
         "config": {
           "port": 9200,
           "jwtSecret": "your-secret-key",
-          "tokenExpiry": 86400
+          "tokenExpiry": 172800
         }
       }
     }
@@ -69,7 +69,7 @@ openclaw gateway restart
 |--------|------|--------|------|
 | `port` | number | 9200 | WebSocket 服务端口 |
 | `jwtSecret` | string | - | JWT 签名密钥（建议使用 SecretRef） |
-| `tokenExpiry` | number | 86400 | Token 有效期（秒），默认 24h |
+| `tokenExpiry` | number | 172800 | Token 有效期（秒），默认 48h |
 
 ## 使用方法
 
@@ -225,4 +225,4 @@ Boen - OpenClaw Team
 
 - [OpenClaw 文档](https://docs.openclaw.ai)
 - [GitHub](https://github.com/your-username/exec-stream)
-- [npm](https://www.npmjs.com/package/@openclaw/exec-stream)
+- [npm](https://www.npmjs.com/package/openclaw-exec-stream)

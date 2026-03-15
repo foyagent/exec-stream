@@ -1,5 +1,5 @@
 {
-  "name": "@openclaw/exec-stream",
+  "name": "openclaw-exec-stream",
   "version": "0.1.0",
   "description": "实时展示 OpenClaw 命令执行过程的插件，支持 Web 终端界面和授权码功能",
   "main": "index.ts",
@@ -17,12 +17,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/openclaw/exec-stream.git"
+    "url": "https://github.com/foyagent/exec-stream.git"
   },
   "bugs": {
-    "url": "https://github.com/openclaw/exec-stream/issues"
+    "url": "https://github.com/foyagent/exec-stream/issues"
   },
-  "homepage": "https://github.com/openclaw/exec-stream#readme",
+  "homepage": "https://github.com/foyagent/exec-stream#readme",
   "engines": {
     "node": ">=18.0.0"
   },

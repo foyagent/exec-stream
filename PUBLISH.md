@@ -17,7 +17,7 @@ npm login
 ### 2. 检查包名是否可用
 
 ```bash
-npm search @openclaw/exec-stream
+npm search openclaw-exec-stream
 ```
 
 如果包名已被占用，修改 `package.json` 中的 `name` 字段。
@@ -36,10 +36,10 @@ npm publish --access public
 
 ```bash
 # 搜索你的包
-npm search @openclaw/exec-stream
+npm search openclaw-exec-stream
 
 # 查看包信息
-npm info @openclaw/exec-stream
+npm info openclaw-exec-stream
 ```
 
 ## 发布到 GitHub
@@ -118,15 +118,15 @@ npm publish
 
 ```bash
 # 通过 npm 安装
-npm install @openclaw/exec-stream
+npm install openclaw-exec-stream
 
 # 或通过 OpenClaw CLI 安装（如果支持）
-openclaw plugins install @openclaw/exec-stream
+openclaw plugins install openclaw-exec-stream
 ```
 
 ## 注意事项
 
-1. **包名** - 确保 `@openclaw/exec-stream` 这个 scope 可用
+1. **包名** - 确保 `openclaw-exec-stream` 这个 scope 可用
 2. **版本号** - 遵循语义化版本（SemVer）
 3. **README** - 保持 README.md 更新
 4. **测试** - 发布前确保功能正常
