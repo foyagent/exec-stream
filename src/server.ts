@@ -3,8 +3,17 @@ import * as http from 'http';
 import * as jwt from 'jsonwebtoken';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as zlib from 'zlib';
+import * as crypto from 'crypto';
 import { ExecStreamHook } from './hook';
-import type { PluginConfig, RemoteAuthVerifyResult, WebSocketMessage } from './types';
+import type {
+  CompressionConfig,
+  EncryptedPayloadEnvelope,
+  EncryptedWebSocketMessage,
+  PluginConfig,
+  RemoteAuthVerifyResult,
+  WebSocketMessage
+} from './types';
 
 type CachedCommand = {
   execId: string;
@@ -28,6 +37,12 @@ type ApiLike = {
   registerHttpRoute?: (route: { path: string; auth: string; match: string; handler: () => Promise<boolean> | boolean }) => void;
 };
 
+type JwtClaims = {
+  sub: string;
+  permissions: string[];
+  encKey: string;
+};
+
 export class ExecStreamServer {
   private static server: http.Server | null = null;
   private static wss: WebSocketServer | null = null;
@@ -36,10 +51,16 @@ export class ExecStreamServer {
   private static jwtSecret: string;
   private static tokenExpirySeconds: number;
   private static remoteToken?: string;
+  private static derivedEncryptionKey: Buffer;
+  private static compressionConfig: Required<CompressionConfig> = {
+    enabled: true,
+    threshold: 1024
+  };
 
   private static authCodes: Map<string, { deviceId: string; createdAt: number }> = new Map();
   private static authorizedDevices: Map<string, string> = new Map();
   private static commandCache: CachedCommand[] = [];
+  private static readonly maxCachedCommands = 10;
 
   static register(api: ApiLike, config: PluginConfig) {
     this.createServer(api, config, 'plugin');
@@ -70,10 +91,15 @@ export class ExecStreamServer {
 
     const port = config.port || 9200;
     this.jwtSecret = config.jwtSecret || 'default-secret-change-me';
+    this.derivedEncryptionKey = this.deriveKey(this.jwtSecret);
     this.tokenExpirySeconds = config.tokenExpiry || 172800;
     this.remoteToken = config.remoteToken;
     this.api = api;
     this.webDir = path.join(__dirname, '../web');
+    this.compressionConfig = {
+      enabled: config.compression?.enabled ?? true,
+      threshold: config.compression?.threshold ?? 1024
+    };
 
     this.server = http.createServer((req, res) => {
       this.handleHttpRequest(req, res);
@@ -85,8 +111,9 @@ export class ExecStreamServer {
       const token = this.extractToken(req);
 
       try {
-        const payload = jwt.verify(token, this.jwtSecret) as any;
+        const payload = jwt.verify(token, this.jwtSecret) as JwtClaims;
         (ws as any).userId = payload.sub;
+        (ws as any).encKey = payload.encKey;
         api.logger.info(`[exec-stream][${source}] WebSocket client connected: ${payload.sub}`);
       } catch {
         api.logger.warn(`[exec-stream][${source}] WebSocket auth failed: invalid token`);
@@ -116,6 +143,70 @@ export class ExecStreamServer {
     this.server.listen(port, '0.0.0.0', () => {
       api.logger.info(`[exec-stream][${source}] WebSocket server listening on port ${port}`);
     });
+  }
+
+  static getCompressionConfig(): Required<CompressionConfig> {
+    return { ...this.compressionConfig };
+  }
+
+  static shouldCompress(payload: string): boolean {
+    if (!this.compressionConfig.enabled) return false;
+    return Buffer.byteLength(payload, 'utf8') >= this.compressionConfig.threshold;
+  }
+
+  static compressPayload(payload: string): string {
+    return zlib.deflateSync(Buffer.from(payload, 'utf8')).toString('base64');
+  }
+
+  static inflatePayload(base64Payload: string): string {
+    return zlib.inflateSync(Buffer.from(base64Payload, 'base64')).toString('utf8');
+  }
+
+  static deriveKey(secret: string): Buffer {
+    return crypto.createHash('sha256').update(secret, 'utf8').digest();
+  }
+
+  static encodeKeyForClaim(key: Buffer): string {
+    return key.toString('base64url');
+  }
+
+  static decodeKeyFromClaim(key: string): Buffer {
+    return Buffer.from(key, 'base64url');
+  }
+
+  private static getEncryptionKey(): Buffer {
+    return this.derivedEncryptionKey || this.deriveKey(this.jwtSecret || 'default-secret-change-me');
+  }
+
+  static encrypt(plainText: string, key: Buffer = this.getEncryptionKey()): EncryptedWebSocketMessage {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    return {
+      type: 'encrypted',
+      data: encrypted.toString('base64'),
+      iv: iv.toString('base64'),
+      authTag: authTag.toString('base64')
+    };
+  }
+
+  static decrypt(message: EncryptedWebSocketMessage, key: Buffer = this.getEncryptionKey()): string {
+    const iv = Buffer.from(message.iv, 'base64');
+    const authTag = Buffer.from(message.authTag, 'base64');
+    const encrypted = Buffer.from(message.data, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+  }
+
+  static toWireMessage(payload: string): string {
+    const envelope: EncryptedPayloadEnvelope = this.shouldCompress(payload)
+      ? { compressed: true, payload: this.compressPayload(payload) }
+      : { compressed: false, payload };
+
+    return JSON.stringify(this.encrypt(JSON.stringify(envelope)));
   }
 
   private static handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -311,7 +402,13 @@ export class ExecStreamServer {
       return { success: false, error: '授权码无效或已过期' };
     }
 
-    const token = jwt.sign({ sub: authData.deviceId, permissions: ['exec:read'] }, this.jwtSecret, {
+    const claims: JwtClaims = {
+      sub: authData.deviceId,
+      permissions: ['exec:read'],
+      encKey: this.encodeKeyForClaim(this.derivedEncryptionKey)
+    };
+
+    const token = jwt.sign(claims, this.jwtSecret, {
       expiresIn: this.tokenExpirySeconds
     });
 
@@ -385,8 +482,8 @@ export class ExecStreamServer {
 
   static addCommandToCache(command: CachedCommand) {
     this.commandCache.push(command);
-    if (this.commandCache.length > 10) {
-      this.commandCache = this.commandCache.slice(-10);
+    if (this.commandCache.length > this.maxCachedCommands) {
+      this.commandCache = this.commandCache.slice(-this.maxCachedCommands);
     }
     this.api.logger.info(`[exec-stream] Cached command: ${command.command}`);
   }

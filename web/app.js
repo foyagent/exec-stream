@@ -12,6 +12,8 @@ class ExecStreamClient {
     this.pollInterval = null;
     this.authInfo = null;
     this.historyLoaded = false;
+    this.currentToken = null;
+    this.encryptionKey = null;
 
     this.execOutputReceived = new Map();
     this.lang = localStorage.getItem('exec-stream-lang') || 'zh';
@@ -203,8 +205,10 @@ class ExecStreamClient {
   }
 
   connect(token) {
+    this.currentToken = token;
+    this.encryptionKey = this.extractEncryptionKeyFromToken(token);
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/exec-stream?token=${token}`;
+    const wsUrl = `${wsProtocol}//${window.location.host}/exec-stream?token=${encodeURIComponent(token)}`;
 
     this.updateStatus('connecting', 'statusConnecting');
 
@@ -217,9 +221,10 @@ class ExecStreamClient {
         this.appendMeta(this.t('wsConnected'));
       };
 
-      this.ws.onmessage = (event) => {
+      this.ws.onmessage = async (event) => {
         try {
-          const message = JSON.parse(event.data);
+          if (typeof event.data !== 'string') return;
+          const message = await this.parseIncomingMessage(event.data);
           this.handleMessage(message);
         } catch (e) {
           console.error('Parse message error:', e);
@@ -245,6 +250,109 @@ class ExecStreamClient {
     } catch (e) {
       this.appendOutput(this.t('connectFailed', { message: e.message }), 'error');
     }
+  }
+
+  async parseIncomingMessage(rawData) {
+    const message = JSON.parse(rawData);
+
+    if (message.type === 'compressed') {
+      return JSON.parse(this.inflateBase64Payload(message.data));
+    }
+
+    if (message.type === 'encrypted') {
+      if (!this.encryptionKey) {
+        throw new Error('Missing encryption key');
+      }
+
+      const decrypted = await this.decrypt(message, this.encryptionKey);
+      const envelope = JSON.parse(decrypted);
+      return envelope.compressed
+        ? JSON.parse(this.inflateBase64Payload(envelope.payload))
+        : JSON.parse(envelope.payload);
+    }
+
+    return message;
+  }
+
+  inflateBase64Payload(base64) {
+    if (!window.pako || typeof window.pako.inflate !== 'function') {
+      throw new Error('pako inflate is not available');
+    }
+
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+
+    return window.pako.inflate(bytes, { to: 'string' });
+  }
+
+  extractEncryptionKeyFromToken(token) {
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+
+    try {
+      const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+      const payload = JSON.parse(atob(padded));
+      return typeof payload.encKey === 'string' ? payload.encKey : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async decrypt(message, keyBase64Url) {
+    const cryptoApi = window.crypto && window.crypto.subtle;
+    if (!cryptoApi) {
+      throw new Error('Web Crypto API is not available');
+    }
+
+    const key = await cryptoApi.importKey(
+      'raw',
+      this.toArrayBuffer(this.base64UrlToBytes(keyBase64Url)),
+      { name: 'AES-GCM' },
+      false,
+      ['decrypt']
+    );
+
+    const encryptedBytes = this.base64ToBytes(message.data);
+    const authTagBytes = this.base64ToBytes(message.authTag);
+    const combined = new Uint8Array(encryptedBytes.length + authTagBytes.length);
+    combined.set(encryptedBytes, 0);
+    combined.set(authTagBytes, encryptedBytes.length);
+
+    const decrypted = await cryptoApi.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: this.toArrayBuffer(this.base64ToBytes(message.iv)),
+        tagLength: 128
+      },
+      key,
+      this.toArrayBuffer(combined)
+    );
+
+    return new TextDecoder().decode(decrypted);
+  }
+
+  base64ToBytes(value) {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  base64UrlToBytes(value) {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+    return this.base64ToBytes(padded);
+  }
+
+  toArrayBuffer(bytes) {
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
 
   handleMessage(message) {

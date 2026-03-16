@@ -15,9 +15,28 @@ export interface AuthSuccessMessageData {
   token?: string;
 }
 
+export interface CompressedWebSocketMessage {
+  type: 'compressed';
+  data: string;
+}
+
+export interface EncryptedWebSocketMessage {
+  type: 'encrypted';
+  data: string;
+  iv: string;
+  authTag: string;
+}
+
+export interface EncryptedPayloadEnvelope {
+  compressed: boolean;
+  payload: string;
+}
+
 export interface WebSocketMessage {
-  type: 'exec_start' | 'exec_output' | 'exec_end' | 'auth_success' | 'pong';
-  data?: ExecEvent | AuthSuccessMessageData;
+  type: 'exec_start' | 'exec_output' | 'exec_end' | 'auth_success' | 'pong' | 'compressed' | 'encrypted';
+  data?: ExecEvent | AuthSuccessMessageData | string;
+  iv?: string;
+  authTag?: string;
 }
 
 export type ExecStreamMode = 'local' | 'remote';
@@ -27,11 +46,17 @@ export interface RemoteConfig {
   remoteToken?: string;
 }
 
+export interface CompressionConfig {
+  enabled?: boolean;
+  threshold?: number;
+}
+
 export interface PluginConfig extends RemoteConfig {
   port?: number;
   jwtSecret?: string;
   tokenExpiry?: number;
   mode?: ExecStreamMode;
+  compression?: CompressionConfig;
 }
 
 export interface ResolvedPluginConfig extends PluginConfig {

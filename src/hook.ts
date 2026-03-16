@@ -240,6 +240,10 @@ export class ExecStreamHook {
     return `exec_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   }
 
+  private static sanitizeMessage(message: WebSocketMessage | any): WebSocketMessage | any {
+    return message;
+  }
+
   private static handleMessage(event: any) {
     const content = this.extractMessageText(event);
     if (!content) return;
@@ -299,11 +303,15 @@ export class ExecStreamHook {
   }
 
   static broadcastLocal(message: WebSocketMessage | any) {
-    const data = JSON.stringify(message);
+    const payload = this.sanitizeMessage(message);
+    const jsonPayload = JSON.stringify(payload);
+    const { ExecStreamServer } = require('./server');
+    const wireMessage = ExecStreamServer.toWireMessage(jsonPayload);
+
     this.clients.forEach(ws => {
       try {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(data);
+          ws.send(wireMessage);
         }
       } catch {
         // ignore broken websocket clients
