@@ -13,7 +13,7 @@ Commands:
 
 Examples:
   openclaw-exec-stream install --mode local --port 9200
-  openclaw-exec-stream install --mode remote --server https://nas.local:9200 --token your-token
+  openclaw-exec-stream install --mode remote --server https://nas.local:9200 [--token your-token]
   openclaw-exec-stream install --help
 `);
 }

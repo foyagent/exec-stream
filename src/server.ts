@@ -392,7 +392,7 @@ export class ExecStreamServer {
   }
 
   static verifyCode(code: string, req?: http.IncomingMessage): RemoteAuthVerifyResult {
-    if (req && !this.isRemoteRequestAuthorized(req)) {
+    if (req?.headers.authorization && !this.isRemoteRequestAuthorized(req)) {
       return { success: false, error: 'remote token invalid' };
     }
 

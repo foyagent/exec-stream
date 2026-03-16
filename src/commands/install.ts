@@ -25,13 +25,13 @@ const COMMAND_HELP = `Install Exec Stream into OpenClaw config.
 
 Usage:
   openclaw-exec-stream install --mode local [--port 9200] [--config ~/.openclaw/openclaw.json]
-  openclaw-exec-stream install --mode remote --server https://nas.local:9200 --token your-token [--config ~/.openclaw/openclaw.json]
+  openclaw-exec-stream install --mode remote --server https://nas.local:9200 [--token your-token] [--config ~/.openclaw/openclaw.json]
 
 Options:
   --mode <local|remote>   Installation mode
   --port <number>         Local Exec Stream port (local mode only, default: 9200)
   --server <url>          Remote Exec Stream server URL (remote mode only)
-  --token <token>         Remote bearer token (remote mode only)
+  --token <token>         Optional remote bearer token for server-to-server requests
   --config <path>         Explicit OpenClaw config path
   -h, --help              Show this help message
 `;
@@ -126,9 +126,6 @@ function validateOptions(options: InstallOptions) {
     throw new Error(`Invalid --server URL: ${options.server}`);
   }
 
-  if (!options.token) {
-    throw new Error('Remote mode requires --token.');
-  }
 }
 
 function resolveConfigPath(explicitPath?: string): string {

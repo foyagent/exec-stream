@@ -31,7 +31,7 @@ npx . install --mode local --port 9200
 Remote mode:
 
 ```bash
-npx . install --mode remote --server https://nas.local:9200 --token your-token
+npx . install --mode remote --server https://nas.local:9200 [--token your-token]
 ```
 
 ### Start standalone server
@@ -161,7 +161,7 @@ sudo systemctl status exec-stream
 
 ```bash
 npx openclaw-exec-stream install --mode local --port 9200
-npx openclaw-exec-stream install --mode remote --server https://nas.local:9200 --token your-token
+npx openclaw-exec-stream install --mode remote --server https://nas.local:9200 [--token your-token]
 npx openclaw-exec-stream install --help
 ```
 
@@ -178,7 +178,7 @@ What it does:
 - `--mode <local|remote>` required
 - `--port <number>` local mode only
 - `--server <url>` remote mode only
-- `--token <token>` remote mode only
+- `--token <token>` optional remote bearer token for server-to-server requests
 - `--config <path>` optional explicit config path
 - `-h, --help` show help
 
@@ -189,7 +189,7 @@ Plugin config keys:
 - `mode`: `local` or `remote`
 - `port`: local HTTP/WebSocket port
 - `remoteServer`: remote server base URL
-- `remoteToken`: remote bearer token
+- `remoteToken`: optional remote bearer token
 - `jwtSecret`: JWT signing secret for local server / standalone server
 - `tokenExpiry`: JWT lifetime in seconds
 

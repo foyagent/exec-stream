@@ -44,10 +44,12 @@ export class ExecStreamHook {
   private static api: PluginAPI;
   private static config: ResolvedPluginConfig = { mode: 'local' };
   private static activeExecs: Map<string, ActiveExecState> = new Map();
+  private static remoteSessionToken?: string;
 
   static register(api: PluginAPI, config: ResolvedPluginConfig) {
     this.api = api;
     this.config = config;
+    this.remoteSessionToken = undefined;
 
     api.runtime?.events?.onAgentEvent?.((event: AgentEventPayload) => {
       this.handleAgentEvent(event);
@@ -257,6 +259,10 @@ export class ExecStreamHook {
     this.verifyAuthCode(code)
       .then(result => {
         if (result.success) {
+          if (this.config.mode === 'remote' && result.token) {
+            this.remoteSessionToken = result.token;
+          }
+
           this.api.logger.info(`[exec-stream] Auth code verified (${this.config.mode} mode): ${code}`);
           this.broadcast({
             type: 'auth_success',
@@ -331,8 +337,9 @@ export class ExecStreamHook {
       'Content-Type': 'application/json'
     };
 
-    if (this.config.remoteToken) {
-      headers.Authorization = `Bearer ${this.config.remoteToken}`;
+    const authToken = this.remoteSessionToken || this.config.remoteToken;
+    if (authToken) {
+      headers.Authorization = `Bearer ${authToken}`;
     }
 
     try {
@@ -365,25 +372,34 @@ export class ExecStreamHook {
       return { success: false, error: 'remoteServer 未配置' };
     }
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
+    const url = new URL('/exec-stream/auth/verify', this.ensureTrailingSlash(remoteServer)).toString();
 
-    if (this.config.remoteToken) {
-      headers.Authorization = `Bearer ${this.config.remoteToken}`;
-    }
+    const requestVerify = async (authorization?: string): Promise<{ response: Response; payload: any }> => {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
 
-    try {
-      const response = await fetch(
-        new URL('/exec-stream/auth/verify', this.ensureTrailingSlash(remoteServer)).toString(),
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ code })
-        }
-      );
+      if (authorization) {
+        headers.Authorization = `Bearer ${authorization}`;
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ code })
+      });
 
       const payload = await response.json().catch(() => ({}));
+      return { response, payload };
+    };
+
+    try {
+      let { response, payload } = await requestVerify(this.config.remoteToken);
+
+      if (!response.ok && this.config.remoteToken && (response.status === 401 || response.status === 403)) {
+        ({ response, payload } = await requestVerify());
+      }
+
       if (!response.ok) {
         return {
           success: false,
