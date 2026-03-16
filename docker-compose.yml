@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  exec-stream:
+    build: .
+    container_name: exec-stream
+    ports:
+      - "9200:9200"
+    environment:
+      EXEC_STREAM_PORT: 9200
+      EXEC_STREAM_JWT_SECRET: change-me-before-production
+      EXEC_STREAM_REMOTE_TOKEN: change-me-if-you-use-remote-reporting
+      EXEC_STREAM_TOKEN_EXPIRY: 172800
+    restart: unless-stopped

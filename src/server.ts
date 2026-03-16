@@ -17,11 +17,22 @@ type CachedCommand = {
   stderr?: string;
 };
 
+type LoggerLike = {
+  info: (msg: string) => void;
+  warn: (msg: string) => void;
+  error: (msg: string) => void;
+};
+
+type ApiLike = {
+  logger: LoggerLike;
+  registerHttpRoute?: (route: { path: string; auth: string; match: string; handler: () => Promise<boolean> | boolean }) => void;
+};
+
 export class ExecStreamServer {
   private static server: http.Server | null = null;
   private static wss: WebSocketServer | null = null;
   private static webDir: string;
-  private static api: any;
+  private static api: ApiLike;
   private static jwtSecret: string;
   private static tokenExpirySeconds: number;
   private static remoteToken?: string;
@@ -30,7 +41,33 @@ export class ExecStreamServer {
   private static authorizedDevices: Map<string, string> = new Map();
   private static commandCache: CachedCommand[] = [];
 
-  static register(api: any, config: PluginConfig) {
+  static register(api: ApiLike, config: PluginConfig) {
+    this.createServer(api, config, 'plugin');
+
+    api.registerHttpRoute?.({
+      path: '/exec-stream',
+      auth: 'plugin',
+      match: 'prefix',
+      handler: async () => false
+    });
+  }
+
+  static registerStandalone(config: PluginConfig) {
+    const logger: LoggerLike = {
+      info: msg => console.log(msg),
+      warn: msg => console.warn(msg),
+      error: msg => console.error(msg)
+    };
+
+    this.createServer({ logger }, config, 'standalone');
+  }
+
+  private static createServer(api: ApiLike, config: PluginConfig, source: 'plugin' | 'standalone') {
+    if (this.server) {
+      api.logger.warn(`[exec-stream][${source}] Server already running; skipping duplicate register`);
+      return;
+    }
+
     const port = config.port || 9200;
     this.jwtSecret = config.jwtSecret || 'default-secret-change-me';
     this.tokenExpirySeconds = config.tokenExpiry || 172800;
@@ -50,9 +87,9 @@ export class ExecStreamServer {
       try {
         const payload = jwt.verify(token, this.jwtSecret) as any;
         (ws as any).userId = payload.sub;
-        api.logger.info(`[exec-stream][local] WebSocket client connected: ${payload.sub}`);
+        api.logger.info(`[exec-stream][${source}] WebSocket client connected: ${payload.sub}`);
       } catch {
-        api.logger.warn('[exec-stream][local] WebSocket auth failed: invalid token');
+        api.logger.warn(`[exec-stream][${source}] WebSocket auth failed: invalid token`);
         ws.close(1008, 'Unauthorized');
         return;
       }
@@ -66,25 +103,18 @@ export class ExecStreamServer {
             ws.send(JSON.stringify({ type: 'pong' }));
           }
         } catch {
-          // ignore
+          // ignore invalid ping frames
         }
       });
 
       ws.on('close', () => {
         ExecStreamHook.removeClient(ws);
-        api.logger.info('[exec-stream][local] WebSocket client disconnected');
+        api.logger.info(`[exec-stream][${source}] WebSocket client disconnected`);
       });
     });
 
-    api.registerHttpRoute({
-      path: '/exec-stream',
-      auth: 'plugin',
-      match: 'prefix',
-      handler: async () => false
-    });
-
     this.server.listen(port, '0.0.0.0', () => {
-      api.logger.info(`[exec-stream][local] WebSocket server listening on port ${port}`);
+      api.logger.info(`[exec-stream][${source}] WebSocket server listening on port ${port}`);
     });
   }
 
@@ -217,13 +247,7 @@ export class ExecStreamServer {
 
     res.setHeader('Content-Type', 'application/json');
     this.applyCorsHeaders(res);
-    res.end(
-      JSON.stringify({
-        code,
-        deviceId,
-        expiresIn: 300
-      })
-    );
+    res.end(JSON.stringify({ code, deviceId, expiresIn: 300 }));
 
     this.api.logger.info(`[exec-stream][local] Generated auth code: ${code} for device: ${deviceId}`);
   }
@@ -273,18 +297,10 @@ export class ExecStreamServer {
 
     res.setHeader('Content-Type', 'application/json');
     this.applyCorsHeaders(res);
-    res.end(
-      JSON.stringify({
-        authorized: !!token,
-        token: token || null
-      })
-    );
+    res.end(JSON.stringify({ authorized: !!token, token: token || null }));
   }
 
-  static verifyCode(
-    code: string,
-    req?: http.IncomingMessage
-  ): RemoteAuthVerifyResult {
+  static verifyCode(code: string, req?: http.IncomingMessage): RemoteAuthVerifyResult {
     if (req && !this.isRemoteRequestAuthorized(req)) {
       return { success: false, error: 'remote token invalid' };
     }
@@ -343,13 +359,7 @@ export class ExecStreamServer {
   }
 
   private static isCachedCommand(value: any): value is CachedCommand {
-    return Boolean(
-      value &&
-        typeof value === 'object' &&
-        typeof value.execId === 'string' &&
-        typeof value.command === 'string' &&
-        typeof value.timestamp === 'number'
-    );
+    return Boolean(value && typeof value === 'object' && typeof value.execId === 'string' && typeof value.command === 'string' && typeof value.timestamp === 'number');
   }
 
   private static isRemoteRequestAuthorized(req: http.IncomingMessage): boolean {
@@ -384,12 +394,7 @@ export class ExecStreamServer {
   private static handleCommandsRequest(res: http.ServerResponse) {
     res.setHeader('Content-Type', 'application/json');
     this.applyCorsHeaders(res);
-    res.end(
-      JSON.stringify({
-        commands: [...this.commandCache].sort((a, b) => a.timestamp - b.timestamp),
-        count: this.commandCache.length
-      })
-    );
+    res.end(JSON.stringify({ commands: [...this.commandCache].sort((a, b) => a.timestamp - b.timestamp), count: this.commandCache.length }));
   }
 
   static broadcastLocal(message: WebSocketMessage | any) {

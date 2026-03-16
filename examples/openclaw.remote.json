@@ -1,0 +1,15 @@
+{
+  "plugins": {
+    "allow": ["exec-stream"],
+    "entries": {
+      "exec-stream": {
+        "enabled": true,
+        "config": {
+          "mode": "remote",
+          "remoteServer": "https://nas.local:9200",
+          "remoteToken": "replace-me"
+        }
+      }
+    }
+  }
+}

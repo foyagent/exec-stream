@@ -1,9 +1,13 @@
 {
   "name": "openclaw-exec-stream",
   "version": "0.1.0",
-  "description": "实时展示 OpenClaw 命令执行过程的插件，支持 Web 终端界面和授权码功能",
-  "main": "index.ts",
-  "types": "index.ts",
+  "description": "Real-time Exec Stream plugin and standalone server for OpenClaw",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "openclaw-exec-stream": "./dist/cli.js",
+    "exec-stream-server": "./dist/standalone.js"
+  },
   "keywords": [
     "openclaw",
     "exec",
@@ -27,25 +31,36 @@
     "node": ">=18.0.0"
   },
   "files": [
-    "src/",
+    "dist/",
     "web/",
-    "index.ts",
     "openclaw.plugin.json",
     "README.md",
-    "LICENSE"
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "Dockerfile",
+    "docker-compose.yml",
+    "ecosystem.config.js",
+    "exec-stream.service",
+    "examples/"
   ],
   "dependencies": {
-    "ws": "^8.18.0",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@types/ws": "^8.5.14",
     "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^24.5.2",
+    "@types/ws": "^8.5.14",
     "typescript": "^5.8.2"
   },
   "scripts": {
     "prepare": "echo 'OpenClaw plugin ready'",
-    "build": "tsc --noEmit",
+    "build": "tsc",
+    "build:cli": "tsc && chmod +x dist/cli.js",
+    "build:standalone": "tsc -p tsconfig.build.json",
+    "start": "node dist/standalone.js",
+    "start:standalone": "node dist/standalone.js",
     "test": "echo 'No tests yet'"
   }
 }

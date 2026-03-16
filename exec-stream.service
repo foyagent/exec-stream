@@ -1,0 +1,19 @@
+[Unit]
+Description=Exec Stream standalone server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/exec-stream
+Environment=NODE_ENV=production
+Environment=EXEC_STREAM_PORT=9200
+Environment=EXEC_STREAM_JWT_SECRET=change-me-before-production
+Environment=EXEC_STREAM_TOKEN_EXPIRY=172800
+ExecStart=/usr/bin/node /opt/exec-stream/dist/standalone.js
+Restart=always
+RestartSec=5
+User=exec-stream
+Group=exec-stream
+
+[Install]
+WantedBy=multi-user.target

@@ -9,8 +9,10 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "allowJs": false,
-    "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "outDir": "dist",
+    "rootDir": ".",
+    "declaration": true
   },
-  "include": ["index.ts", "src/**/*.ts"]
+  "include": ["index.ts", "cli.ts", "standalone.ts", "src/**/*.ts"]
 }

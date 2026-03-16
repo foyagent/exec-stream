@@ -1,0 +1,14 @@
+{
+  "plugins": {
+    "allow": ["exec-stream"],
+    "entries": {
+      "exec-stream": {
+        "enabled": true,
+        "config": {
+          "mode": "local",
+          "port": 9200
+        }
+      }
+    }
+  }
+}
