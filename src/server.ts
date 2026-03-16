@@ -4,7 +4,7 @@ import * as jwt from 'jsonwebtoken';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ExecStreamHook } from './hook';
-import type { PluginConfig } from './types';
+import type { PluginConfig, RemoteAuthVerifyResult, WebSocketMessage } from './types';
 
 type CachedCommand = {
   execId: string;
@@ -24,6 +24,7 @@ export class ExecStreamServer {
   private static api: any;
   private static jwtSecret: string;
   private static tokenExpirySeconds: number;
+  private static remoteToken?: string;
 
   private static authCodes: Map<string, { deviceId: string; createdAt: number }> = new Map();
   private static authorizedDevices: Map<string, string> = new Map();
@@ -33,6 +34,7 @@ export class ExecStreamServer {
     const port = config.port || 9200;
     this.jwtSecret = config.jwtSecret || 'default-secret-change-me';
     this.tokenExpirySeconds = config.tokenExpiry || 172800;
+    this.remoteToken = config.remoteToken;
     this.api = api;
     this.webDir = path.join(__dirname, '../web');
 
@@ -48,9 +50,9 @@ export class ExecStreamServer {
       try {
         const payload = jwt.verify(token, this.jwtSecret) as any;
         (ws as any).userId = payload.sub;
-        api.logger.info(`WebSocket client connected: ${payload.sub}`);
+        api.logger.info(`[exec-stream][local] WebSocket client connected: ${payload.sub}`);
       } catch {
-        api.logger.warn('WebSocket auth failed: invalid token');
+        api.logger.warn('[exec-stream][local] WebSocket auth failed: invalid token');
         ws.close(1008, 'Unauthorized');
         return;
       }
@@ -70,7 +72,7 @@ export class ExecStreamServer {
 
       ws.on('close', () => {
         ExecStreamHook.removeClient(ws);
-        api.logger.info('WebSocket client disconnected');
+        api.logger.info('[exec-stream][local] WebSocket client disconnected');
       });
     });
 
@@ -82,7 +84,7 @@ export class ExecStreamServer {
     });
 
     this.server.listen(port, '0.0.0.0', () => {
-      api.logger.info(`Exec Stream WebSocket server listening on port ${port}`);
+      api.logger.info(`[exec-stream][local] WebSocket server listening on port ${port}`);
     });
   }
 
@@ -90,9 +92,17 @@ export class ExecStreamServer {
     const parsedUrl = new URL(req.url || '/', 'http://localhost');
     const urlPath = parsedUrl.pathname;
 
+    if (req.method === 'OPTIONS') {
+      this.applyCorsHeaders(res);
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
     if (urlPath === '/exec-stream/health' || urlPath === '/health') {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
+      this.applyCorsHeaders(res);
       res.end(JSON.stringify({ status: 'ok' }));
       return;
     }
@@ -114,6 +124,11 @@ export class ExecStreamServer {
 
     if (urlPath === '/exec-stream/commands' && req.method === 'GET') {
       this.handleCommandsRequest(res);
+      return;
+    }
+
+    if (urlPath === '/exec-stream/api/events' && req.method === 'POST') {
+      this.handleIncomingRemoteEvent(req, res);
       return;
     }
 
@@ -164,6 +179,12 @@ export class ExecStreamServer {
     }
   }
 
+  private static applyCorsHeaders(res: http.ServerResponse) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  }
+
   private static extractToken(req: http.IncomingMessage): string {
     const cookie = req.headers.cookie || '';
     const match = cookie.match(/exec_stream_token=([^;]+)/);
@@ -195,40 +216,42 @@ export class ExecStreamServer {
     }, 5 * 60 * 1000);
 
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.end(JSON.stringify({
-      code,
-      deviceId,
-      expiresIn: 300
-    }));
+    this.applyCorsHeaders(res);
+    res.end(
+      JSON.stringify({
+        code,
+        deviceId,
+        expiresIn: 300
+      })
+    );
 
-    this.api.logger.info(`[exec-stream] Generated auth code: ${code} for device: ${deviceId}`);
+    this.api.logger.info(`[exec-stream][local] Generated auth code: ${code} for device: ${deviceId}`);
   }
 
   private static handleAuthVerifyRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     let body = '';
-    req.on('data', chunk => body += chunk);
+    req.on('data', chunk => (body += chunk));
     req.on('end', () => {
       try {
         const { code } = JSON.parse(body);
-        const result = this.verifyCode(code);
+        const result = this.verifyCode(code, req);
 
         if (!result.success) {
           res.statusCode = 400;
           res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Access-Control-Allow-Origin', '*');
+          this.applyCorsHeaders(res);
           res.end(JSON.stringify({ success: false, error: result.error }));
           this.api.logger.warn(`[exec-stream] Invalid auth code: ${code}`);
           return;
         }
 
         res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Access-Control-Allow-Origin', '*');
+        this.applyCorsHeaders(res);
         res.end(JSON.stringify({ success: true, token: result.token, deviceId: result.deviceId }));
       } catch {
         res.statusCode = 400;
         res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Access-Control-Allow-Origin', '*');
+        this.applyCorsHeaders(res);
         res.end(JSON.stringify({ success: false, error: '请求格式错误' }));
       }
     });
@@ -241,7 +264,7 @@ export class ExecStreamServer {
     if (!deviceId) {
       res.statusCode = 400;
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      this.applyCorsHeaders(res);
       res.end(JSON.stringify({ authorized: false, error: '缺少 deviceId' }));
       return;
     }
@@ -249,25 +272,32 @@ export class ExecStreamServer {
     const token = this.authorizedDevices.get(deviceId);
 
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.end(JSON.stringify({
-      authorized: !!token,
-      token: token || null
-    }));
+    this.applyCorsHeaders(res);
+    res.end(
+      JSON.stringify({
+        authorized: !!token,
+        token: token || null
+      })
+    );
   }
 
-  static verifyCode(code: string): { success: boolean; token?: string; deviceId?: string; error?: string } {
+  static verifyCode(
+    code: string,
+    req?: http.IncomingMessage
+  ): RemoteAuthVerifyResult {
+    if (req && !this.isRemoteRequestAuthorized(req)) {
+      return { success: false, error: 'remote token invalid' };
+    }
+
     const authData = this.authCodes.get(code);
 
     if (!authData) {
       return { success: false, error: '授权码无效或已过期' };
     }
 
-    const token = jwt.sign(
-      { sub: authData.deviceId, permissions: ['exec:read'] },
-      this.jwtSecret,
-      { expiresIn: this.tokenExpirySeconds }
-    );
+    const token = jwt.sign({ sub: authData.deviceId, permissions: ['exec:read'] }, this.jwtSecret, {
+      expiresIn: this.tokenExpirySeconds
+    });
 
     this.authorizedDevices.set(authData.deviceId, token);
     this.authCodes.delete(code);
@@ -275,6 +305,72 @@ export class ExecStreamServer {
     this.api.logger.info(`[exec-stream] Auth code verified: ${code} -> device: ${authData.deviceId}`);
 
     return { success: true, token, deviceId: authData.deviceId };
+  }
+
+  private static handleIncomingRemoteEvent(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (!this.isRemoteRequestAuthorized(req)) {
+      res.statusCode = 401;
+      res.setHeader('Content-Type', 'application/json');
+      this.applyCorsHeaders(res);
+      res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+      this.api.logger.warn('[exec-stream][local] Rejected remote event: invalid token');
+      return;
+    }
+
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', () => {
+      try {
+        const event = JSON.parse(body) as WebSocketMessage;
+        ExecStreamHook.broadcastLocal(event as any);
+
+        if (event.type === 'exec_end' && event.data && this.isCachedCommand(event.data)) {
+          this.addCommandToCache(event.data);
+        }
+
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        this.applyCorsHeaders(res);
+        res.end(JSON.stringify({ success: true }));
+        this.api.logger.info(`[exec-stream][local] Accepted remote event: ${event.type}`);
+      } catch {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        this.applyCorsHeaders(res);
+        res.end(JSON.stringify({ success: false, error: 'Invalid event payload' }));
+      }
+    });
+  }
+
+  private static isCachedCommand(value: any): value is CachedCommand {
+    return Boolean(
+      value &&
+        typeof value === 'object' &&
+        typeof value.execId === 'string' &&
+        typeof value.command === 'string' &&
+        typeof value.timestamp === 'number'
+    );
+  }
+
+  private static isRemoteRequestAuthorized(req: http.IncomingMessage): boolean {
+    const token = this.extractBearerToken(req.headers.authorization);
+    if (!token) return false;
+
+    if (this.remoteToken && token === this.remoteToken) {
+      return true;
+    }
+
+    try {
+      jwt.verify(token, this.jwtSecret);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private static extractBearerToken(header?: string): string | undefined {
+    if (!header || !header.startsWith('Bearer ')) return undefined;
+    return header.substring(7).trim() || undefined;
   }
 
   static addCommandToCache(command: CachedCommand) {
@@ -287,11 +383,17 @@ export class ExecStreamServer {
 
   private static handleCommandsRequest(res: http.ServerResponse) {
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.end(JSON.stringify({
-      commands: [...this.commandCache].sort((a, b) => a.timestamp - b.timestamp),
-      count: this.commandCache.length
-    }));
+    this.applyCorsHeaders(res);
+    res.end(
+      JSON.stringify({
+        commands: [...this.commandCache].sort((a, b) => a.timestamp - b.timestamp),
+        count: this.commandCache.length
+      })
+    );
+  }
+
+  static broadcastLocal(message: WebSocketMessage | any) {
+    ExecStreamHook.broadcastLocal(message);
   }
 
   static stop() {

@@ -45,6 +45,7 @@
   },
   "scripts": {
     "prepare": "echo 'OpenClaw plugin ready'",
+    "build": "tsc --noEmit",
     "test": "echo 'No tests yet'"
   }
 }

@@ -1,4 +1,9 @@
-import type { ExecEvent, WebSocketMessage } from './types';
+import type {
+  ExecEvent,
+  RemoteAuthVerifyResult,
+  ResolvedPluginConfig,
+  WebSocketMessage
+} from './types';
 
 declare const WebSocket: {
   OPEN: number;
@@ -37,10 +42,12 @@ type PluginAPI = {
 export class ExecStreamHook {
   private static clients: Set<any> = new Set();
   private static api: PluginAPI;
+  private static config: ResolvedPluginConfig = { mode: 'local' };
   private static activeExecs: Map<string, ActiveExecState> = new Map();
 
-  static register(api: PluginAPI) {
+  static register(api: PluginAPI, config: ResolvedPluginConfig) {
     this.api = api;
+    this.config = config;
 
     api.runtime?.events?.onAgentEvent?.((event: AgentEventPayload) => {
       this.handleAgentEvent(event);
@@ -117,6 +124,8 @@ export class ExecStreamHook {
         // ignore unsupported message hooks
       }
     });
+
+    api.logger.info(`[exec-stream] Hook registered in ${config.mode} mode`);
   }
 
   private static handleAgentEvent(event: AgentEventPayload) {
@@ -211,8 +220,8 @@ export class ExecStreamHook {
     return `${run}:no-tool-call-id:${cmd}:${timestamp || 0}`;
   }
 
-  private static asRecord(value: unknown): Record<string, unknown> | undefined {
-    return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+  private static asRecord(value: unknown): Record<string, any> | undefined {
+    return value && typeof value === 'object' ? (value as Record<string, any>) : undefined;
   }
 
   private static asString(value: unknown): string {
@@ -239,20 +248,24 @@ export class ExecStreamHook {
     if (!match) return;
 
     const code = match[1];
-    this.api.logger.info(`[exec-stream] Detected auth phrase: ${code}`);
+    this.api.logger.info(`[exec-stream] Detected auth phrase (${this.config.mode} mode): ${code}`);
 
-    const { ExecStreamServer } = require('./server');
-    const result = ExecStreamServer.verifyCode(code);
-
-    if (result.success) {
-      this.api.logger.info(`[exec-stream] Auth code verified from chat: ${code}`);
-      this.broadcast({
-        type: 'auth_success',
-        data: { message: '授权成功！', token: result.token }
-      } as WebSocketMessage | any);
-    } else {
-      this.api.logger.warn(`[exec-stream] Auth phrase invalid: ${code}`);
-    }
+    this.verifyAuthCode(code)
+      .then(result => {
+        if (result.success) {
+          this.api.logger.info(`[exec-stream] Auth code verified (${this.config.mode} mode): ${code}`);
+          this.broadcast({
+            type: 'auth_success',
+            data: { message: '授权成功！', token: result.token }
+          } as WebSocketMessage | any);
+        } else {
+          this.api.logger.warn(`[exec-stream] Auth phrase invalid (${this.config.mode} mode): ${code}`);
+        }
+      })
+      .catch(error => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.api.logger.error(`[exec-stream] Auth verification failed (${this.config.mode} mode): ${message}`);
+      });
   }
 
   private static extractMessageText(event: any): string {
@@ -277,6 +290,15 @@ export class ExecStreamHook {
   }
 
   static broadcast(message: WebSocketMessage | any) {
+    if (this.config.mode === 'remote') {
+      void this.reportToRemote(message);
+      return;
+    }
+
+    this.broadcastLocal(message);
+  }
+
+  static broadcastLocal(message: WebSocketMessage | any) {
     const data = JSON.stringify(message);
     this.clients.forEach(ws => {
       try {
@@ -287,6 +309,94 @@ export class ExecStreamHook {
         // ignore broken websocket clients
       }
     });
+  }
+
+  static async reportToRemote(event: WebSocketMessage | any) {
+    const remoteServer = this.config.remoteServer?.trim();
+    if (!remoteServer) {
+      this.api.logger.warn('[exec-stream] Remote mode enabled but remoteServer is not configured');
+      return;
+    }
+
+    const url = new URL('/exec-stream/api/events', this.ensureTrailingSlash(remoteServer)).toString();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+
+    if (this.config.remoteToken) {
+      headers.Authorization = `Bearer ${this.config.remoteToken}`;
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(event)
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        this.api.logger.warn(
+          `[exec-stream] Remote event report failed: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.api.logger.error(`[exec-stream] Remote event report error: ${message}`);
+    }
+  }
+
+  private static async verifyAuthCode(code: string): Promise<RemoteAuthVerifyResult> {
+    if (this.config.mode === 'local') {
+      const { ExecStreamServer } = require('./server');
+      return ExecStreamServer.verifyCode(code);
+    }
+
+    const remoteServer = this.config.remoteServer?.trim();
+    if (!remoteServer) {
+      return { success: false, error: 'remoteServer 未配置' };
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+
+    if (this.config.remoteToken) {
+      headers.Authorization = `Bearer ${this.config.remoteToken}`;
+    }
+
+    try {
+      const response = await fetch(
+        new URL('/exec-stream/auth/verify', this.ensureTrailingSlash(remoteServer)).toString(),
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ code })
+        }
+      );
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return {
+          success: false,
+          error: this.asOptionalString(payload?.error) || `HTTP ${response.status}`
+        };
+      }
+
+      return {
+        success: Boolean(payload?.success),
+        token: this.asOptionalString(payload?.token),
+        deviceId: this.asOptionalString(payload?.deviceId),
+        error: this.asOptionalString(payload?.error)
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  }
+
+  private static ensureTrailingSlash(value: string): string {
+    return value.endsWith('/') ? value : `${value}/`;
   }
 
   static addClient(ws: any) {

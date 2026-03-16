@@ -9,7 +9,21 @@
       "port": {
         "type": "number",
         "default": 9200,
-        "description": "WebSocket 服务端口"
+        "description": "WebSocket 服务端口（仅 local 模式生效）"
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["local", "remote"],
+        "default": "local",
+        "description": "local=本地服务器, remote=连接远程服务器"
+      },
+      "remoteServer": {
+        "type": "string",
+        "description": "远程服务器地址 (remote 模式必填)，如 https://nas.local:9200"
+      },
+      "remoteToken": {
+        "type": "string",
+        "description": "远程服务器认证 Token (remote 模式用)"
       },
       "jwtSecret": {
         "type": "string",
