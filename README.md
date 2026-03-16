@@ -1,50 +1,56 @@
-# Exec Stream - OpenClaw 终端命令实时推送插件
+# Exec Stream
 
-实时展示 OpenClaw 执行的终端命令及输出，支持 Web 终端界面。
+Exec Stream is an OpenClaw plugin plus a standalone relay server for streaming `exec` activity to a browser UI in real time.
 
-## 功能特性
+## Features
 
-- ✅ **实时命令输出** - 实时显示命令执行过程和输出
-- ✅ **Web 终端界面** - 类似终端的 UI，支持滚动查看历史
-- ✅ **授权码功能** - 标准化授权口令 `/exec-stream auth xxxxxx`，支持一键复制
-- ✅ **自动授权 Skill** - 内置授权处理 skill，自动识别并验证授权码
-- ✅ **JWT 鉴权** - 安全的 JWT token 鉴权，支持 48 小时有效期
-- ✅ **多设备支持** - 支持多设备同时连接
+- Real-time command start, output, and completion events
+- OpenClaw plugin mode: `local` or `remote`
+- Standalone Node.js server entrypoint
+- Browser auth flow with one-time code + JWT token
+- Deployment templates for Docker, PM2, and systemd
+- CLI installer for writing `exec-stream` config into `~/.openclaw/openclaw.json`
 
-## 安装
+## Quick Start
 
-### 通过 npm 安装（推荐）
+### Install package
 
-```bash
-npm install openclaw-exec-stream
-```
-
-### 手动安装
-
-1. 克隆仓库：
-```bash
-git clone https://github.com/your-username/exec-stream.git
-cd exec-stream
-```
-
-2. 安装依赖：
 ```bash
 npm install
+npm run build
 ```
 
-3. 复制到 OpenClaw 插件目录：
+### Install into OpenClaw config
+
+Local mode:
+
 ```bash
-cp -r . ~/.openclaw/extensions/exec-stream/
+npx . install --mode local --port 9200
 ```
 
-4. 重启 OpenClaw Gateway：
+Remote mode:
+
 ```bash
-openclaw gateway restart
+npx . install --mode remote --server https://nas.local:9200 --token your-token
 ```
 
-## 配置
+### Start standalone server
 
-在 `~/.openclaw/openclaw.json` 中添加配置：
+```bash
+npm run build:standalone
+EXEC_STREAM_PORT=9200 \
+EXEC_STREAM_JWT_SECRET=change-me \
+EXEC_STREAM_REMOTE_TOKEN=remote-secret \
+npm run start:standalone
+```
+
+Then open `http://localhost:9200/exec-stream`.
+
+## Installation Modes
+
+### 1) As an OpenClaw plugin: local mode
+
+In local mode, the OpenClaw plugin starts the embedded HTTP/WebSocket server directly.
 
 ```json
 {
@@ -54,9 +60,8 @@ openclaw gateway restart
       "exec-stream": {
         "enabled": true,
         "config": {
-          "port": 9200,
-          "jwtSecret": "your-secret-key",
-          "tokenExpiry": 172800
+          "mode": "local",
+          "port": 9200
         }
       }
     }
@@ -64,57 +69,142 @@ openclaw gateway restart
 }
 ```
 
-### 配置项说明
+### 2) As an OpenClaw plugin: remote mode
 
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `port` | number | 9200 | WebSocket 服务端口 |
-| `jwtSecret` | string | - | JWT 签名密钥（建议使用 SecretRef） |
-| `tokenExpiry` | number | 172800 | Token 有效期（秒），默认 48h |
+In remote mode, OpenClaw only forwards exec events and auth verification requests to a remote Exec Stream server.
 
-## 使用方法
+```json
+{
+  "plugins": {
+    "allow": ["exec-stream"],
+    "entries": {
+      "exec-stream": {
+        "enabled": true,
+        "config": {
+          "mode": "remote",
+          "remoteServer": "https://nas.local:9200",
+          "remoteToken": "your-token"
+        }
+      }
+    }
+  }
+}
+```
 
-### 1. 生成访问 Token
+## Standalone Deployment
+
+### Node.js / npx
 
 ```bash
-# 方法1：通过 API 生成
-curl http://localhost:9200/exec-stream/auth/code
-
-# 方法2：通过 WebUI 自动生成
-# 访问 http://localhost:9200/exec-stream
-# 自动显示授权码界面
+npm install
+npm run build:standalone
+EXEC_STREAM_PORT=9200 EXEC_STREAM_JWT_SECRET=change-me EXEC_STREAM_REMOTE_TOKEN=remote-secret npm run start:standalone
 ```
 
-### 2. 授权访问
+Environment variables:
 
-访问 `http://localhost:9200/exec-stream`，会显示授权码界面：
+- `EXEC_STREAM_PORT` - listen port, default `9200`
+- `EXEC_STREAM_JWT_SECRET` - JWT signing secret
+- `EXEC_STREAM_TOKEN_EXPIRY` - token lifetime in seconds, default `172800`
+- `EXEC_STREAM_REMOTE_TOKEN` - optional bearer token required for remote event ingestion
 
+### Docker
+
+```bash
+docker build -t exec-stream .
+docker run -p 9200:9200 \
+  -e EXEC_STREAM_PORT=9200 \
+  -e EXEC_STREAM_JWT_SECRET=change-me \
+  -e EXEC_STREAM_TOKEN_EXPIRY=172800 \
+  -e EXEC_STREAM_REMOTE_TOKEN=remote-secret \
+  exec-stream
 ```
-请授权访问
-授权码: 123456
-[📋 复制授权码]
+
+Docker Compose example:
+
+```yaml
+services:
+  exec-stream:
+    build: .
+    ports:
+      - "9200:9200"
+    environment:
+      EXEC_STREAM_PORT: 9200
+      EXEC_STREAM_JWT_SECRET: change-me
+      EXEC_STREAM_TOKEN_EXPIRY: 172800
+      EXEC_STREAM_REMOTE_TOKEN: remote-secret
+    restart: unless-stopped
 ```
 
-点击复制按钮，会复制标准化授权口令：
+### PM2
+
+```bash
+npm install
+npm run build
+pm2 start ecosystem.config.js
+pm2 save
 ```
-/exec-stream auth 123456
+
+### systemd
+
+Copy `exec-stream.service` to `/etc/systemd/system/exec-stream.service`, adjust `WorkingDirectory`, `ExecStart`, `User`, and secrets, then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now exec-stream
+sudo systemctl status exec-stream
 ```
 
-将授权口令发送给 OpenClaw（在任何渠道），即可完成授权。
+## CLI
 
-**自动授权**：插件内置了授权处理 skill，OpenClaw 会自动识别 `/exec-stream auth xxxxxx` 格式的消息并验证授权码。
+### Install command
 
-### 3. 查看命令输出
+```bash
+npx openclaw-exec-stream install --mode local --port 9200
+npx openclaw-exec-stream install --mode remote --server https://nas.local:9200 --token your-token
+npx openclaw-exec-stream install --help
+```
 
-授权成功后，WebUI 自动连接并显示终端界面，实时展示命令执行过程。
+What it does:
 
-## API 端点
+- Detects the OpenClaw config path (default `~/.openclaw/openclaw.json`)
+- Reads existing JSON config if present
+- Adds `exec-stream` to `plugins.allow`
+- Adds or updates `plugins.entries["exec-stream"]`
+- Prints the resulting plugin snippet and next steps
+
+### CLI options
+
+- `--mode <local|remote>` required
+- `--port <number>` local mode only
+- `--server <url>` remote mode only
+- `--token <token>` remote mode only
+- `--config <path>` optional explicit config path
+- `-h, --help` show help
+
+## Configuration Reference
+
+Plugin config keys:
+
+- `mode`: `local` or `remote`
+- `port`: local HTTP/WebSocket port
+- `remoteServer`: remote server base URL
+- `remoteToken`: remote bearer token
+- `jwtSecret`: JWT signing secret for local server / standalone server
+- `tokenExpiry`: JWT lifetime in seconds
+
+## API
+
+### `GET /exec-stream/health`
+Returns service health:
+
+```json
+{ "status": "ok" }
+```
 
 ### `GET /exec-stream/auth/code`
+Creates a one-time auth code:
 
-生成六位数授权码。
-
-**响应示例**：
 ```json
 {
   "code": "123456",
@@ -124,113 +214,45 @@ curl http://localhost:9200/exec-stream/auth/code
 ```
 
 ### `POST /exec-stream/auth/verify`
+Verifies an auth code and returns a JWT token.
 
-验证授权码并返回 JWT token。
+### `GET /exec-stream/auth/status?deviceId=...`
+Checks whether a device has already been authorized.
 
-**请求体**：
-```json
-{
-  "code": "123456"
-}
-```
+### `POST /exec-stream/api/events`
+Receives forwarded exec events in remote mode. Requires `Authorization: Bearer <token>` when `remoteToken` is configured.
 
-**响应示例**：
-```json
-{
-  "success": true,
-  "token": "eyJhbGciOiJIUzI1NiIs...",
-  "deviceId": "device_xxx"
-}
-```
+### `GET /exec-stream/commands`
+Returns the latest cached command summary list.
 
-### `GET /exec-stream/auth/status?deviceId=xxx`
-
-检查设备授权状态。
-
-**响应示例**：
-```json
-{
-  "authorized": true,
-  "token": "eyJhbGciOiJIUzI1NiIs..."
-}
-```
-
-### `GET /exec-stream/health`
-
-健康检查端点。
-
-## 技术架构
-
-```
-OpenClaw Extension Hook (exec 拦截)
-    ↓
-WebSocket Server (端口 9200)
-    ↓
-Web Frontend (浏览器)
-```
-
-### 核心模块
-
-1. **Exec Hook** (`src/hook.ts`) - 拦截 exec 工具调用
-2. **WebSocket Server** (`src/server.ts`) - WebSocket 服务 + HTTP API
-3. **Web Frontend** (`web/`) - 终端 UI + WebSocket 客户端
-
-## 开发
-
-### 本地开发
+## Development
 
 ```bash
-# 克隆仓库
-git clone https://github.com/your-username/exec-stream.git
-cd exec-stream
-
-# 安装依赖
 npm install
-
-# 复制到 OpenClaw 插件目录
-cp -r . ~/.openclaw/extensions/exec-stream/
-
-# 重启 Gateway（修改代码后需要重启）
-openclaw gateway restart
+npm run build
+node dist/cli.js install --help
 ```
 
-### 文件结构
+Project layout:
 
-```
-exec-stream/
-├── openclaw.plugin.json    # OpenClaw 插件 manifest
-├── package.json            # npm 配置
-├── index.ts                # 插件入口
-├── src/
-│   ├── types.ts           # 类型定义
-│   ├── hook.ts            # exec 拦截
-│   └── server.ts          # WebSocket 服务
-└── web/
-    ├── index.html         # 前端页面
-    └── app.js             # WebSocket 客户端
+```text
+src/
+├── cli.ts
+├── commands/install.ts
+├── hook.ts
+├── server.ts
+├── standalone.ts
+└── types.ts
 ```
 
-## 安全说明
+## Examples
 
-- **JWT Token** - 使用 JWT 进行身份验证，有效期 24 小时
-- **授权码** - 一次性使用，5 分钟有效期
-- **HTTPS** - 生产环境建议使用 HTTPS
-- **密钥管理** - 建议使用 SecretRef 管理 jwtSecret
+- `examples/openclaw.local.json`
+- `examples/openclaw.remote.json`
+- `docker-compose.yml`
+- `ecosystem.config.js`
+- `exec-stream.service`
 
 ## License
 
 MIT
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 作者
-
-Boen - OpenClaw Team
-
-## 链接
-
-- [OpenClaw 文档](https://docs.openclaw.ai)
-- [GitHub](https://github.com/your-username/exec-stream)
-- [npm](https://www.npmjs.com/package/openclaw-exec-stream)
