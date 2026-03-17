@@ -11,7 +11,7 @@ Exec Stream is an OpenClaw plugin plus a standalone relay server for streaming `
 - Standalone Node.js server entrypoint
 - Browser auth flow with one-time code + JWT token
 - Deployment templates for Docker, PM2, and systemd
-- CLI installer for writing `exec-stream` config into `~/.openclaw/openclaw.json`
+- CLI installer that links the plugin into OpenClaw and writes `exec-stream` config into `~/.openclaw/openclaw.json`
 
 ## Quick Start
 
@@ -22,18 +22,31 @@ npm install
 npm run build
 ```
 
-### Install into OpenClaw config
+### Install into OpenClaw
+
+The CLI install command now does both steps for you:
+
+1. Runs `openclaw plugins install <this-plugin> --link` to install the plugin files and skills into `~/.openclaw/extensions/`
+2. Updates `~/.openclaw/openclaw.json`
 
 Local mode:
 
 ```bash
-npx . install --mode local --port 9200
+npx openclaw-exec-stream install --mode local --port 9200
 ```
 
 Remote mode:
 
 ```bash
-npx . install --mode remote --server https://nas.local:9200 [--token your-token]
+npx openclaw-exec-stream install --mode remote --server https://nas.local:9200 [--token your-token]
+```
+
+Manual alternatives:
+
+```bash
+openclaw plugins install openclaw-exec-stream
+# or during local development
+openclaw plugins install /path/to/exec-stream --link
 ```
 
 ### Start standalone server
@@ -169,6 +182,8 @@ npx openclaw-exec-stream install --help
 
 What it does:
 
+- Runs `openclaw plugins install <this-plugin> --link`
+- Installs plugin files and skills into `~/.openclaw/extensions/`
 - Detects the OpenClaw config path (default `~/.openclaw/openclaw.json`)
 - Reads existing JSON config if present
 - Adds `exec-stream` to `plugins.allow`

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 
 type InstallMode = 'local' | 'remote';
 
@@ -21,11 +22,15 @@ type OpenClawConfig = {
   [key: string]: any;
 };
 
-const COMMAND_HELP = `Install Exec Stream into OpenClaw config.
+const COMMAND_HELP = `Install Exec Stream into OpenClaw.
 
 Usage:
   openclaw-exec-stream install --mode local [--port 9200] [--config ~/.openclaw/openclaw.json]
   openclaw-exec-stream install --mode remote --server https://nas.local:9200 [--token your-token] [--config ~/.openclaw/openclaw.json]
+
+What this command does:
+  1. Runs \`openclaw plugins install <this-plugin> --link\` to install plugin files + skills
+  2. Updates OpenClaw config with plugins.entries["exec-stream"]
 
 Options:
   --mode <local|remote>   Installation mode
@@ -45,6 +50,7 @@ export async function runInstallCommand(argv: string[]) {
   }
 
   validateOptions(options);
+  ensurePluginInstalled();
 
   const configPath = resolveConfigPath(options.config);
   const config = readConfig(configPath);
@@ -125,15 +131,44 @@ function validateOptions(options: InstallOptions) {
   } catch {
     throw new Error(`Invalid --server URL: ${options.server}`);
   }
+}
 
+function ensurePluginInstalled() {
+  const pluginRoot = path.resolve(__dirname, '../../');
+  const availabilityCheck = spawnSync('openclaw', ['--help'], { stdio: 'ignore' });
+
+  if (availabilityCheck.error) {
+    if ((availabilityCheck.error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(
+        'OpenClaw CLI not found in PATH. Please install OpenClaw first, then run:\n' +
+          `  openclaw plugins install "${pluginRoot}" --link`
+      );
+    }
+
+    throw new Error(`Failed to start OpenClaw CLI: ${availabilityCheck.error.message}`);
+  }
+
+  console.log('📦 Installing Exec Stream plugin files into OpenClaw...');
+  const installResult = spawnSync('openclaw', ['plugins', 'install', pluginRoot, '--link'], {
+    stdio: 'inherit'
+  });
+
+  if (installResult.error) {
+    throw new Error(`Failed to run openclaw plugins install: ${installResult.error.message}`);
+  }
+
+  if (installResult.status !== 0) {
+    throw new Error(
+      'openclaw plugins install failed. Fix the error above, then retry this command.\n' +
+        `You can also run it manually:\n  openclaw plugins install "${pluginRoot}" --link`
+    );
+  }
 }
 
 function resolveConfigPath(explicitPath?: string): string {
-  const candidates = [
-    explicitPath,
-    process.env.OPENCLAW_CONFIG_PATH,
-    path.join(os.homedir(), '.openclaw', 'openclaw.json')
-  ].filter(Boolean) as string[];
+  const candidates = [explicitPath, process.env.OPENCLAW_CONFIG_PATH, path.join(os.homedir(), '.openclaw', 'openclaw.json')].filter(
+    Boolean
+  ) as string[];
 
   for (const candidate of candidates) {
     const resolved = expandHome(candidate);
@@ -199,7 +234,7 @@ function writeConfig(configPath: string, config: OpenClawConfig) {
 }
 
 function printSuccess(configPath: string, execStreamConfig: Record<string, unknown>) {
-  console.log('✅ Exec Stream config updated successfully.');
+  console.log('✅ Exec Stream installed and configured successfully.');
   console.log(`Config file: ${configPath}`);
   console.log('');
   console.log('plugins.entries["exec-stream"]:');
@@ -207,12 +242,12 @@ function printSuccess(configPath: string, execStreamConfig: Record<string, unkno
   console.log('');
   console.log('Next steps:');
   if (execStreamConfig.mode === 'local') {
-    console.log(`1. Restart OpenClaw Gateway.`);
+    console.log('1. Restart OpenClaw Gateway.');
     console.log(`2. Open http://localhost:${execStreamConfig.port || 9200}/exec-stream`);
   } else {
     console.log('1. Make sure your remote Exec Stream server is reachable.');
     console.log('2. Restart OpenClaw Gateway.');
-    console.log(`3. Open ${(execStreamConfig.remoteServer as string || '').replace(/\/$/, '')}/exec-stream`);
+    console.log(`3. Open ${((execStreamConfig.remoteServer as string) || '').replace(/\/$/, '')}/exec-stream`);
   }
 }
 
