@@ -50,55 +50,101 @@ interface WindowPako {
   inflate(data: Uint8Array, options: { to: 'string' }): string;
 }
 
+interface CommandRecord {
+  type: 'command' | 'output' | 'meta';
+  text: string;
+  className?: string;
+  time?: string;
+  cwd?: string;
+  lineCount?: number;
+  expanded?: boolean;
+}
+
+interface TabSession {
+  id: string;
+  name: string;
+  deviceId?: string;
+  token?: string;
+  authCode?: string;
+  authInfo?: string;
+  commands: CommandRecord[];
+  ws?: WebSocket | null;
+  pollInterval?: ReturnType<typeof setInterval> | null;
+  reconnectDelay: number;
+  encryptionKey?: string | null;
+  execOutputReceived: Record<string, boolean>;
+  status: 'connecting' | 'connected' | 'disconnected' | 'waiting';
+  statusKey: string;
+}
+
+interface PersistedTabSession {
+  id: string;
+  name: string;
+  deviceId?: string;
+  token?: string;
+  authCode?: string;
+  authInfo?: string;
+  commands?: CommandRecord[];
+}
+
 interface Window {
   execStreamClient?: ExecStreamClient;
   pako?: WindowPako;
+  copyAuthCode?: () => void;
+  toggleTheme?: () => void;
+  toggleLang?: () => void;
+  loadHistory?: () => Promise<void>;
 }
 
 class ExecStreamClient {
-  ws: WebSocket | null;
+  static readonly STORAGE_KEY = 'exec-stream-tabs';
+  static readonly ACTIVE_TAB_STORAGE_KEY = 'exec-stream-active-tab';
+  static readonly MAX_COMMANDS = 120;
+
   terminal: HTMLDivElement;
   statusDot: HTMLDivElement;
   statusText: HTMLSpanElement;
   authContainer: HTMLDivElement;
   authCode: HTMLDivElement;
-  reconnectDelay: number;
-  maxReconnectDelay: number;
-  deviceId: string | null;
-  pollInterval: ReturnType<typeof setInterval> | null;
-  authInfo: string | null;
-  historyLoaded: boolean;
-  currentToken: string | null;
-  encryptionKey: string | null;
-  execOutputReceived: Map<string, boolean>;
+  authTitle: HTMLDivElement;
+  authHint: HTMLDivElement;
+  copyBtn: HTMLButtonElement;
+  tabList: HTMLDivElement;
+  addTabBtn: HTMLButtonElement;
+  historyBtn: HTMLButtonElement;
   lang: 'zh' | 'en';
   theme: 'dark' | 'light';
+  tabs: Map<string, TabSession>;
+  activeTabId: string | null;
+  editingTabId: string | null;
   messages: Record<string, Record<string, string>>;
 
   constructor() {
-    this.ws = null;
     this.terminal = document.getElementById('terminal') as HTMLDivElement;
     this.statusDot = document.getElementById('statusDot') as HTMLDivElement;
     this.statusText = document.getElementById('statusText') as HTMLSpanElement;
     this.authContainer = document.getElementById('authContainer') as HTMLDivElement;
     this.authCode = document.getElementById('authCode') as HTMLDivElement;
-    this.reconnectDelay = 1000;
-    this.maxReconnectDelay = 30000;
-    this.deviceId = null;
-    this.pollInterval = null;
-    this.authInfo = null;
-    this.historyLoaded = false;
-    this.currentToken = null;
-    this.encryptionKey = null;
-
-    this.execOutputReceived = new Map();
+    this.authTitle = document.getElementById('authTitle') as HTMLDivElement;
+    this.authHint = document.getElementById('authHint') as HTMLDivElement;
+    this.copyBtn = document.getElementById('copyBtn') as HTMLButtonElement;
+    this.tabList = document.getElementById('tabList') as HTMLDivElement;
+    this.addTabBtn = document.getElementById('addTabBtn') as HTMLButtonElement;
+    this.historyBtn = document.getElementById('historyBtn') as HTMLButtonElement;
     this.lang = localStorage.getItem('exec-stream-lang') === 'en' ? 'en' : 'zh';
     this.theme = localStorage.getItem('exec-stream-theme') === 'light' ? 'light' : 'dark';
+    this.tabs = new Map();
+    this.activeTabId = null;
+    this.editingTabId = null;
 
     this.messages = {
       zh: {
         pageTitle: 'Exec Stream - OpenClaw 命令监控',
         title: '🖥️ Exec Stream',
+        tabDefault: 'Session {index}',
+        tabAdd: '+ 新建',
+        tabClose: '关闭标签',
+        tabRenamePlaceholder: '输入名称',
         statusConnecting: '连接中...',
         statusConnected: '已连接',
         statusDisconnected: '已断开',
@@ -125,11 +171,18 @@ class ExecStreamClient {
         expandAll: '展开全部 ({count} 行)',
         collapse: '折叠',
         themeDark: '浅色模式',
-        themeLight: '深色模式'
+        themeLight: '深色模式',
+        terminalEmpty: '这个 Session 还没有命令输出',
+        cannotCloseLastTab: '至少保留一个 Session',
+        renameEmptyFallback: 'Session {index}'
       },
       en: {
         pageTitle: 'Exec Stream - OpenClaw Command Monitor',
         title: '🖥️ Exec Stream',
+        tabDefault: 'Session {index}',
+        tabAdd: '+ New',
+        tabClose: 'Close tab',
+        tabRenamePlaceholder: 'Tab name',
         statusConnecting: 'Connecting...',
         statusConnected: 'Connected',
         statusDisconnected: 'Disconnected',
@@ -156,7 +209,10 @@ class ExecStreamClient {
         expandAll: 'Expand all ({count} lines)',
         collapse: 'Collapse',
         themeDark: 'Light mode',
-        themeLight: 'Dark mode'
+        themeLight: 'Dark mode',
+        terminalEmpty: 'This session has no command output yet',
+        cannotCloseLastTab: 'Keep at least one session',
+        renameEmptyFallback: 'Session {index}'
       }
     };
 
@@ -170,123 +226,500 @@ class ExecStreamClient {
   }
 
   async init(): Promise<void> {
+    this.bindEvents();
     this.applyTheme();
+    this.restoreTabs();
     this.applyLang();
 
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
+    if (token && this.activeTabId) {
+      const tab = this.getActiveTab();
+      if (tab) {
+        tab.token = token;
+        this.persistTabs();
+      }
+    }
 
-    if (token) {
-      this.connect(token);
-    } else {
-      await this.showAuthCodeInterface();
+    this.renderTabs();
+    this.renderActiveTab();
+
+    for (const tab of this.tabs.values()) {
+      if (tab.token) {
+        this.connectTab(tab, tab.token, false);
+      }
+    }
+
+    const activeTab = this.getActiveTab();
+    if (activeTab && !activeTab.token) {
+      await this.ensureAuthCode(activeTab);
     }
   }
 
-  toggleTheme(): void {
-    this.theme = this.theme === 'dark' ? 'light' : 'dark';
-    localStorage.setItem('exec-stream-theme', this.theme);
-    this.applyTheme();
+  bindEvents(): void {
+    this.addTabBtn.addEventListener('click', () => {
+      const tab = this.createTab();
+      this.switchTab(tab.id);
+    });
+    this.copyBtn.addEventListener('click', () => this.copyAuthCode());
   }
 
-  applyTheme(): void {
-    document.documentElement.setAttribute('data-theme', this.theme);
-    const btn = document.getElementById('themeBtn');
-    if (!btn) return;
-    btn.textContent = this.theme === 'light' ? '🌙' : '☀️';
-    btn.title = this.theme === 'light' ? this.t('themeLight') : this.t('themeDark');
+  restoreTabs(): void {
+    let restored: PersistedTabSession[] = [];
+    try {
+      const raw = localStorage.getItem(ExecStreamClient.STORAGE_KEY);
+      if (raw) restored = JSON.parse(raw) as PersistedTabSession[];
+    } catch {
+      restored = [];
+    }
+
+    if (restored.length === 0) {
+      const tab = this.createTab(false);
+      this.activeTabId = tab.id;
+      this.persistTabs();
+      return;
+    }
+
+    restored.forEach((item, index) => {
+      const tab: TabSession = {
+        id: item.id,
+        name: item.name || this.defaultTabName(index + 1),
+        deviceId: item.deviceId,
+        token: item.token,
+        authCode: item.authCode,
+        authInfo: item.authInfo,
+        commands: Array.isArray(item.commands) ? item.commands.slice(-ExecStreamClient.MAX_COMMANDS) : [],
+        ws: null,
+        pollInterval: null,
+        reconnectDelay: 1000,
+        encryptionKey: item.token ? this.extractEncryptionKeyFromToken(item.token) : null,
+        execOutputReceived: {},
+        status: item.token ? 'connecting' : 'waiting',
+        statusKey: item.token ? 'statusConnecting' : 'statusWaitingAuth'
+      };
+      this.tabs.set(tab.id, tab);
+    });
+
+    const savedActiveTabId = localStorage.getItem(ExecStreamClient.ACTIVE_TAB_STORAGE_KEY);
+    this.activeTabId = savedActiveTabId && this.tabs.has(savedActiveTabId)
+      ? savedActiveTabId
+      : this.tabs.keys().next().value || null;
   }
 
-  toggleLang(): void {
-    this.lang = this.lang === 'zh' ? 'en' : 'zh';
-    localStorage.setItem('exec-stream-lang', this.lang);
-    this.applyLang();
+  persistTabs(): void {
+    const data: PersistedTabSession[] = Array.from(this.tabs.values()).map((tab) => ({
+      id: tab.id,
+      name: tab.name,
+      deviceId: tab.deviceId,
+      token: tab.token,
+      authCode: tab.authCode,
+      authInfo: tab.authInfo,
+      commands: tab.commands.slice(-ExecStreamClient.MAX_COMMANDS)
+    }));
+    localStorage.setItem(ExecStreamClient.STORAGE_KEY, JSON.stringify(data));
+    if (this.activeTabId) {
+      localStorage.setItem(ExecStreamClient.ACTIVE_TAB_STORAGE_KEY, this.activeTabId);
+    }
   }
 
-  applyLang(): void {
-    document.documentElement.lang = this.lang === 'zh' ? 'zh-CN' : 'en';
-    document.title = this.t('pageTitle');
-
-    const title = document.querySelector('.header h1');
-    if (title) title.textContent = this.t('title');
-
-    const langBtn = document.getElementById('langBtn');
-    if (langBtn) langBtn.textContent = this.lang === 'zh' ? 'EN' : '中文';
-
-    const historyBtn = document.getElementById('historyBtn');
-    if (historyBtn) historyBtn.textContent = this.t('historyBtn');
-
-    const authTitle = document.getElementById('authTitle');
-    if (authTitle) authTitle.textContent = this.t('authTitle');
-
-    const authHint = document.getElementById('authHint');
-    if (authHint) authHint.textContent = this.t('authHint');
+  generateTabId(): string {
+    return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  async showAuthCodeInterface(): Promise<void> {
-    const response = await fetch('/exec-stream/auth/code');
-    const data = await response.json() as { code: string; deviceId: string };
-
-    this.deviceId = data.deviceId;
-    this.authCode.textContent = data.code;
-    this.authContainer.style.display = 'flex';
-    this.updateStatus('waiting', 'statusWaitingAuth');
-    this.authInfo = `/exec-stream auth ${data.code}`;
-    this.startPolling();
+  defaultTabName(index: number): string {
+    return this.t('tabDefault', { index });
   }
 
-  startPolling(): void {
-    this.pollInterval = setInterval(async () => {
-      const response = await fetch(`/exec-stream/auth/status?deviceId=${this.deviceId}`);
-      const data = await response.json() as { authorized: boolean; token?: string };
+  createTab(shouldPersist = true): TabSession {
+    const tab: TabSession = {
+      id: this.generateTabId(),
+      name: this.defaultTabName(this.tabs.size + 1),
+      commands: [],
+      ws: null,
+      pollInterval: null,
+      reconnectDelay: 1000,
+      encryptionKey: null,
+      execOutputReceived: {},
+      status: 'waiting',
+      statusKey: 'statusWaitingAuth'
+    };
+    this.tabs.set(tab.id, tab);
+    if (!this.activeTabId) this.activeTabId = tab.id;
+    if (shouldPersist) {
+      this.persistTabs();
+      this.renderTabs();
+    }
+    return tab;
+  }
 
-      if (data.authorized && data.token) {
-        if (this.pollInterval) clearInterval(this.pollInterval);
-        this.authContainer.style.display = 'none';
+  getActiveTab(): TabSession | null {
+    return this.activeTabId ? this.tabs.get(this.activeTabId) || null : null;
+  }
 
-        const url = new URL(window.location.href);
-        url.searchParams.set('token', data.token);
-        window.history.pushState({}, '', url);
+  async switchTab(tabId: string): Promise<void> {
+    if (!this.tabs.has(tabId)) return;
+    this.activeTabId = tabId;
+    this.persistTabs();
+    this.renderTabs();
+    this.renderActiveTab();
+    const tab = this.getActiveTab();
+    if (tab && !tab.token) {
+      await this.ensureAuthCode(tab);
+    }
+  }
 
-        this.connect(data.token);
+  closeTab(tabId: string): void {
+    if (this.tabs.size <= 1) {
+      alert(this.t('cannotCloseLastTab'));
+      return;
+    }
+
+    const tab = this.tabs.get(tabId);
+    if (!tab) return;
+
+    this.stopPolling(tab);
+    this.cleanupSocket(tab, false);
+    this.tabs.delete(tabId);
+
+    if (this.activeTabId === tabId) {
+      this.activeTabId = this.tabs.keys().next().value || null;
+    }
+
+    this.persistTabs();
+    this.renderTabs();
+    this.renderActiveTab();
+
+    const activeTab = this.getActiveTab();
+    if (activeTab && !activeTab.token) {
+      this.ensureAuthCode(activeTab);
+    }
+  }
+
+  startRenameTab(tabId: string): void {
+    this.editingTabId = tabId;
+    this.renderTabs();
+    const input = this.tabList.querySelector<HTMLInputElement>(`input[data-tab-id="${tabId}"]`);
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+
+  finishRenameTab(tabId: string, nextName: string): void {
+    const tab = this.tabs.get(tabId);
+    if (!tab) return;
+    const index = Array.from(this.tabs.keys()).indexOf(tabId) + 1;
+    tab.name = nextName.trim() || this.t('renameEmptyFallback', { index });
+    this.editingTabId = null;
+    this.persistTabs();
+    this.renderTabs();
+  }
+
+  renderTabs(): void {
+    this.tabList.innerHTML = '';
+    Array.from(this.tabs.values()).forEach((tab) => {
+      const item = document.createElement('div');
+      item.className = `tab-item${tab.id === this.activeTabId ? ' active' : ''}`;
+      item.dataset.tabId = tab.id;
+
+      const button = document.createElement('button');
+      button.className = 'tab-button';
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        void this.switchTab(tab.id);
+      });
+
+      if (this.editingTabId === tab.id) {
+        const input = document.createElement('input');
+        input.className = 'tab-input';
+        input.value = tab.name;
+        input.dataset.tabId = tab.id;
+        input.placeholder = this.t('tabRenamePlaceholder');
+        input.addEventListener('click', (event) => event.stopPropagation());
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            this.finishRenameTab(tab.id, input.value);
+          } else if (event.key === 'Escape') {
+            this.editingTabId = null;
+            this.renderTabs();
+          }
+        });
+        input.addEventListener('blur', () => this.finishRenameTab(tab.id, input.value));
+        button.appendChild(input);
+      } else {
+        const name = document.createElement('span');
+        name.className = 'tab-name';
+        name.textContent = tab.name;
+        name.title = tab.name;
+        name.addEventListener('dblclick', (event) => {
+          event.stopPropagation();
+          this.startRenameTab(tab.id);
+        });
+        button.appendChild(name);
+      }
+
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'tab-close';
+      closeBtn.type = 'button';
+      closeBtn.textContent = '×';
+      closeBtn.title = this.t('tabClose');
+      closeBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.closeTab(tab.id);
+      });
+
+      item.appendChild(button);
+      item.appendChild(closeBtn);
+      this.tabList.appendChild(item);
+    });
+  }
+
+  renderActiveTab(): void {
+    const tab = this.getActiveTab();
+    this.terminal.innerHTML = '';
+
+    if (!tab) {
+      this.updateStatus('disconnected', 'statusDisconnected');
+      this.authContainer.style.display = 'none';
+      return;
+    }
+
+    this.updateStatus(tab.status, tab.statusKey);
+
+    if (tab.token) {
+      this.authContainer.style.display = 'none';
+    } else {
+      this.authContainer.style.display = 'flex';
+      this.authCode.textContent = tab.authCode || '------';
+    }
+
+    if (tab.commands.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'meta empty-state';
+      empty.textContent = this.t('terminalEmpty');
+      this.terminal.appendChild(empty);
+    } else {
+      tab.commands.forEach((record) => this.renderCommandRecord(record));
+      this.scrollToBottom();
+    }
+
+    this.syncUrlToken(tab.token || null);
+  }
+
+  renderCommandRecord(record: CommandRecord): void {
+    if (record.type === 'command') {
+      const div = document.createElement('div');
+      div.innerHTML = `
+        <div class="meta">${record.time || ''}${record.cwd ? ' • ' + this.escapeHtml(record.cwd) : ''}</div>
+        <div class="command">${this.escapeHtml(record.text)}</div>
+      `;
+      this.terminal.appendChild(div);
+      return;
+    }
+
+    if (record.type === 'meta') {
+      const div = document.createElement('div');
+      div.className = 'meta';
+      div.textContent = record.text;
+      this.terminal.appendChild(div);
+      return;
+    }
+
+    const normalized = String(record.text ?? '');
+    const lineCount = record.lineCount ?? (normalized === '' ? 0 : normalized.split(/\r?\n/).length);
+    const maxLines = 10;
+
+    if (lineCount > maxLines) {
+      const container = document.createElement('div');
+      container.className = `output-container ${record.className || ''}`.trim();
+
+      const outputDiv = document.createElement('div');
+      outputDiv.className = `output ${record.className || ''} collapsible${record.expanded ? '' : ' collapsed'}`.trim();
+      outputDiv.textContent = normalized;
+      outputDiv.style.maxHeight = record.expanded ? 'none' : `${maxLines * 1.6}em`;
+      outputDiv.style.overflow = 'hidden';
+
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'toggle-btn';
+      toggleBtn.dataset.lines = String(lineCount);
+      toggleBtn.dataset.expanded = String(Boolean(record.expanded));
+      toggleBtn.textContent = record.expanded ? this.t('collapse') : this.t('expandAll', { count: lineCount });
+      toggleBtn.onclick = () => {
+        record.expanded = toggleBtn.dataset.expanded !== 'true';
+        if (record.expanded) {
+          outputDiv.style.maxHeight = 'none';
+          outputDiv.classList.remove('collapsed');
+        } else {
+          outputDiv.style.maxHeight = `${maxLines * 1.6}em`;
+          outputDiv.classList.add('collapsed');
+        }
+        toggleBtn.dataset.expanded = String(Boolean(record.expanded));
+        toggleBtn.textContent = record.expanded ? this.t('collapse') : this.t('expandAll', { count: lineCount });
+        this.persistTabs();
+        this.scrollToBottom();
+      };
+
+      container.appendChild(outputDiv);
+      container.appendChild(toggleBtn);
+      this.terminal.appendChild(container);
+      return;
+    }
+
+    const div = document.createElement('div');
+    div.className = `output ${record.className || ''}`.trim();
+    div.textContent = normalized;
+    this.terminal.appendChild(div);
+  }
+
+  async ensureAuthCode(tab: TabSession): Promise<void> {
+    if (tab.token || tab.authCode) {
+      if (tab.id === this.activeTabId) {
+        this.authCode.textContent = tab.authCode || '------';
+        this.authContainer.style.display = 'flex';
+      }
+      return;
+    }
+
+    try {
+      const response = await fetch('/exec-stream/auth/code');
+      const data = await response.json() as { code: string; deviceId: string };
+      tab.deviceId = data.deviceId;
+      tab.authCode = data.code;
+      tab.authInfo = `/exec-stream auth ${data.code}`;
+      tab.status = 'waiting';
+      tab.statusKey = 'statusWaitingAuth';
+      this.persistTabs();
+      if (tab.id === this.activeTabId) {
+        this.authCode.textContent = data.code;
+        this.authContainer.style.display = 'flex';
+        this.updateStatus('waiting', 'statusWaitingAuth');
+      }
+      this.startPolling(tab);
+    } catch (error) {
+      this.appendToTab(tab, {
+        type: 'output',
+        text: this.t('fetchAuthCodeFailed', { message: (error as Error).message }),
+        className: 'error'
+      });
+    }
+  }
+
+  startPolling(tab: TabSession): void {
+    if (tab.pollInterval || !tab.deviceId) return;
+
+    tab.pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`/exec-stream/auth/status?deviceId=${encodeURIComponent(tab.deviceId || '')}`);
+        const data = await response.json() as { authorized: boolean; token?: string };
+
+        if (data.authorized && data.token) {
+          this.stopPolling(tab);
+          tab.token = data.token;
+          tab.authCode = undefined;
+          tab.authInfo = undefined;
+          tab.encryptionKey = this.extractEncryptionKeyFromToken(data.token);
+          this.persistTabs();
+          if (tab.id === this.activeTabId) {
+            this.authContainer.style.display = 'none';
+          }
+          this.connectTab(tab, data.token, true);
+        }
+      } catch (error) {
+        console.error('Poll error:', error);
       }
     }, 2000);
   }
 
-  connect(token: string): void {
-    this.currentToken = token;
-    this.encryptionKey = this.extractEncryptionKeyFromToken(token);
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/exec-stream?token=${encodeURIComponent(token)}`;
-
-    this.updateStatus('connecting', 'statusConnecting');
-    this.ws = new WebSocket(wsUrl);
-
-    this.ws.onopen = () => {
-      this.updateStatus('connected', 'statusConnected');
-      this.reconnectDelay = 1000;
-      this.appendMeta(this.t('wsConnected'));
-    };
-
-    this.ws.onmessage = async (event) => {
-      if (typeof event.data !== 'string') return;
-      const message = await this.parseIncomingMessage(event.data);
-      this.handleMessage(message);
-    };
-
-    this.ws.onclose = (event) => {
-      this.updateStatus('disconnected', 'statusDisconnected');
-      if (event.code === 1008) {
-        this.appendOutput(this.t('authFailed', { reason: event.reason }), 'error');
-      } else {
-        this.appendMeta(this.t('wsDisconnected'));
-        setTimeout(() => this.connect(token), this.reconnectDelay);
-        this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
-      }
-    };
+  stopPolling(tab: TabSession): void {
+    if (tab.pollInterval) {
+      clearInterval(tab.pollInterval);
+      tab.pollInterval = null;
+    }
   }
 
-  async parseIncomingMessage(rawData: string): Promise<any> {
+  connectTab(tab: TabSession, token: string, announce = true): void {
+    this.cleanupSocket(tab, false);
+    tab.token = token;
+    tab.encryptionKey = this.extractEncryptionKeyFromToken(token);
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.host}/exec-stream?token=${encodeURIComponent(token)}`;
+    tab.status = 'connecting';
+    tab.statusKey = 'statusConnecting';
+    if (tab.id === this.activeTabId) this.updateStatus('connecting', 'statusConnecting');
+
+    try {
+      tab.ws = new WebSocket(wsUrl);
+
+      tab.ws.onopen = () => {
+        tab.status = 'connected';
+        tab.statusKey = 'statusConnected';
+        tab.reconnectDelay = 1000;
+        if (announce) {
+          this.appendMetaToTab(tab, this.t('wsConnected'));
+        }
+        if (tab.id === this.activeTabId) this.updateStatus('connected', 'statusConnected');
+        this.persistTabs();
+      };
+
+      tab.ws.onmessage = async (event) => {
+        try {
+          if (typeof event.data !== 'string') return;
+          const message = await this.parseIncomingMessage(event.data, tab.encryptionKey || null);
+          this.handleMessage(tab, message);
+        } catch (error) {
+          console.error('Parse message error:', error);
+        }
+      };
+
+      tab.ws.onclose = (event) => {
+        tab.ws = null;
+        tab.status = 'disconnected';
+        tab.statusKey = 'statusDisconnected';
+        if (tab.id === this.activeTabId) this.updateStatus('disconnected', 'statusDisconnected');
+
+        if (event.code === 1008) {
+          this.appendOutputToTab(tab, this.t('authFailed', { reason: event.reason }), 'error');
+          tab.token = undefined;
+          tab.encryptionKey = null;
+          tab.deviceId = undefined;
+          tab.authCode = undefined;
+          tab.authInfo = undefined;
+          this.persistTabs();
+          void this.ensureAuthCode(tab);
+        } else if (tab.token) {
+          this.appendMetaToTab(tab, this.t('wsDisconnected'));
+          window.setTimeout(() => {
+            if (!this.tabs.has(tab.id) || !tab.token || tab.ws) return;
+            this.connectTab(tab, tab.token, false);
+          }, tab.reconnectDelay);
+          tab.reconnectDelay = Math.min(tab.reconnectDelay * 2, 30000);
+        }
+      };
+
+      tab.ws.onerror = () => {
+        this.appendOutputToTab(tab, this.t('connectError'), 'error');
+      };
+    } catch (error) {
+      this.appendOutputToTab(tab, this.t('connectFailed', { message: (error as Error).message }), 'error');
+    }
+  }
+
+  cleanupSocket(tab: TabSession, preserveToken = true): void {
+    if (tab.ws) {
+      tab.ws.onopen = null;
+      tab.ws.onmessage = null;
+      tab.ws.onclose = null;
+      tab.ws.onerror = null;
+      tab.ws.close();
+      tab.ws = null;
+    }
+    if (!preserveToken) {
+      tab.token = undefined;
+      tab.encryptionKey = null;
+    }
+  }
+
+  async parseIncomingMessage(rawData: string, encryptionKey: string | null): Promise<any> {
     const message = JSON.parse(rawData) as ExecStreamMessage;
 
     if (message.type === 'compressed') {
@@ -294,10 +727,8 @@ class ExecStreamClient {
     }
 
     if (message.type === 'encrypted') {
-      if (!this.encryptionKey) {
-        throw new Error('Missing encryption key');
-      }
-      const decrypted = await this.decrypt(message, this.encryptionKey);
+      if (!encryptionKey) throw new Error('Missing encryption key');
+      const decrypted = await this.decrypt(message, encryptionKey);
       const envelope = JSON.parse(decrypted) as EncryptedPayloadEnvelope;
       return envelope.compressed
         ? JSON.parse(this.inflateBase64Payload(envelope.payload))
@@ -386,72 +817,166 @@ class ExecStreamClient {
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   }
 
-  handleMessage(message: any): void {
+  handleMessage(tab: TabSession, message: any): void {
     switch (message.type as ExecMessageType) {
       case 'exec_start':
-        this.handleExecStart(message.data);
+        this.handleExecStart(tab, message.data);
         break;
       case 'exec_output':
-        this.handleExecOutput(message.data);
+        this.handleExecOutput(tab, message.data);
         break;
       case 'exec_end':
-        this.handleExecEnd(message.data);
+        this.handleExecEnd(tab, message.data);
         break;
       case 'auth_success':
-        this.handleAuthSuccess(message.data);
+        this.handleAuthSuccess(tab, message.data);
         break;
       default:
         break;
     }
   }
 
-  handleAuthSuccess(data: AuthSuccessPayload): void {
-    this.appendMeta(data.message || this.t('authSuccess'));
+  handleAuthSuccess(tab: TabSession, data: AuthSuccessPayload): void {
+    this.appendMetaToTab(tab, data.message || this.t('authSuccess'));
   }
 
-  handleExecStart(data: ExecEvent): void {
+  handleExecStart(tab: TabSession, data: ExecEvent): void {
     const time = new Date(data.timestamp).toLocaleTimeString();
-    this.appendCommand(`$ ${data.command}`, time, data.cwd || '');
-    if (data.execId) this.execOutputReceived.set(data.execId, false);
+    this.appendCommandToTab(tab, `$ ${data.command}`, time, data.cwd || '');
+    if (data.execId) tab.execOutputReceived[data.execId] = false;
   }
 
-  handleExecOutput(data: ExecEvent): void {
-    if (data.execId) this.execOutputReceived.set(data.execId, true);
-    if (data.stdout) this.appendOutput(data.stdout);
-    if (data.stderr) this.appendOutput(data.stderr, 'error');
+  handleExecOutput(tab: TabSession, data: ExecEvent): void {
+    if (data.execId) tab.execOutputReceived[data.execId] = true;
+    if (data.stdout) this.appendOutputToTab(tab, data.stdout);
+    if (data.stderr) this.appendOutputToTab(tab, data.stderr, 'error');
   }
 
-  handleExecEnd(data: ExecEvent): void {
-    const hasReceivedOutput = data.execId && this.execOutputReceived.get(data.execId);
-    if (!hasReceivedOutput) this.handleExecOutput(data);
-    if (data.execId) this.execOutputReceived.delete(data.execId);
+  handleExecEnd(tab: TabSession, data: ExecEvent): void {
+    const hasReceivedOutput = data.execId ? tab.execOutputReceived[data.execId] : false;
+    if (!hasReceivedOutput) this.handleExecOutput(tab, data);
+    if (data.execId) delete tab.execOutputReceived[data.execId];
 
     const duration = data.duration ? `(${data.duration}ms)` : '';
     const exitCode = data.exitCode !== undefined ? `exit ${data.exitCode}` : '';
-    this.appendMeta(this.t('commandEnded', { exitCode, duration }).trim());
+    this.appendMetaToTab(tab, this.t('commandEnded', { exitCode, duration }).trim());
   }
 
-  appendCommand(text: string, time: string, cwd: string): void {
-    const div = document.createElement('div');
-    div.innerHTML = `
-      <div class="meta">${time}${cwd ? ' • ' + this.escapeHtml(cwd) : ''}</div>
-      <div class="command">${this.escapeHtml(text)}</div>
-    `;
-    this.terminal.appendChild(div);
+  appendToTab(tab: TabSession, record: CommandRecord): void {
+    tab.commands.push(record);
+    if (tab.commands.length > ExecStreamClient.MAX_COMMANDS) {
+      tab.commands = tab.commands.slice(-ExecStreamClient.MAX_COMMANDS);
+    }
+    this.persistTabs();
+    if (tab.id === this.activeTabId) {
+      if (this.terminal.querySelector('.empty-state')) {
+        this.terminal.innerHTML = '';
+      }
+      this.renderCommandRecord(record);
+      this.scrollToBottom();
+    }
   }
 
-  appendOutput(text: string, className = ''): void {
-    const div = document.createElement('div');
-    div.className = `output ${className}`.trim();
-    div.textContent = text;
-    this.terminal.appendChild(div);
+  appendCommandToTab(tab: TabSession, text: string, time: string, cwd: string): void {
+    this.appendToTab(tab, { type: 'command', text, time, cwd });
   }
 
-  appendMeta(text: string): void {
-    const div = document.createElement('div');
-    div.className = 'meta';
-    div.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
-    this.terminal.appendChild(div);
+  appendOutputToTab(tab: TabSession, text: string, className = ''): void {
+    const normalized = String(text ?? '');
+    this.appendToTab(tab, {
+      type: 'output',
+      text: normalized,
+      className,
+      lineCount: normalized === '' ? 0 : normalized.split(/\r?\n/).length,
+      expanded: false
+    });
+  }
+
+  appendMetaToTab(tab: TabSession, text: string): void {
+    this.appendToTab(tab, { type: 'meta', text: `[${new Date().toLocaleTimeString()}] ${text}` });
+  }
+
+  copyAuthCode(): void {
+    const tab = this.getActiveTab();
+    if (!tab || !tab.authInfo) {
+      alert(this.t('authNotReady'));
+      return;
+    }
+
+    const text = tab.authInfo;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        this.showCopySuccess();
+      }).catch(() => {
+        this.copyWithFallback(text);
+      });
+      return;
+    }
+
+    this.copyWithFallback(text);
+  }
+
+  copyWithFallback(text: string): void {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+      const successful = document.execCommand('copy');
+      if (successful) {
+        this.showCopySuccess();
+      } else {
+        alert(this.t('authCopyFailed') + text);
+      }
+    } catch {
+      alert(this.t('authCopyFailed') + text);
+    }
+
+    document.body.removeChild(textarea);
+  }
+
+  showCopySuccess(): void {
+    const originalText = this.t('authCopy');
+    this.copyBtn.dataset.copied = 'true';
+    this.copyBtn.textContent = this.t('authCopied');
+    this.copyBtn.style.background = '#1177bb';
+    window.setTimeout(() => {
+      this.copyBtn.textContent = originalText;
+      this.copyBtn.style.background = '';
+      delete this.copyBtn.dataset.copied;
+    }, 2000);
+  }
+
+  async loadHistory(): Promise<void> {
+    try {
+      const response = await fetch('/exec-stream/commands');
+      const data = await response.json() as { commands: ExecEvent[] };
+      const tab = this.getActiveTab();
+      if (!tab) return;
+
+      if (!data.commands.length) {
+        this.appendMetaToTab(tab, this.t('historyEmpty'));
+        return;
+      }
+
+      this.appendMetaToTab(tab, this.t('historyLoaded', { count: data.commands.length }));
+      data.commands.forEach((cmd) => {
+        const time = new Date(cmd.timestamp).toLocaleTimeString();
+        this.appendCommandToTab(tab, `$ ${cmd.command}`, time, cmd.cwd || '');
+        if (cmd.stdout) this.appendOutputToTab(tab, cmd.stdout);
+        if (cmd.stderr) this.appendOutputToTab(tab, cmd.stderr, 'error');
+        const duration = cmd.duration ? `(${cmd.duration}ms)` : '';
+        const exitCode = cmd.exitCode !== undefined ? `exit ${cmd.exitCode}` : '';
+        this.appendMetaToTab(tab, `${this.t('commandEnded', { exitCode, duration }).trim()} [${this.t('historyTag')}]`);
+      });
+    } catch (error) {
+      alert(this.t('loadHistoryFailed', { message: (error as Error).message }));
+    }
   }
 
   updateStatus(status: 'connecting' | 'connected' | 'disconnected' | 'waiting', key: string): void {
@@ -462,6 +987,72 @@ class ExecStreamClient {
     this.statusText.textContent = this.t(key);
   }
 
+  syncUrlToken(token: string | null): void {
+    const url = new URL(window.location.href);
+    if (token) {
+      url.searchParams.set('token', token);
+    } else {
+      url.searchParams.delete('token');
+    }
+    window.history.replaceState({}, '', url);
+  }
+
+  toggleTheme(): void {
+    this.theme = this.theme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('exec-stream-theme', this.theme);
+    this.applyTheme();
+  }
+
+  applyTheme(): void {
+    document.documentElement.setAttribute('data-theme', this.theme);
+    const btn = document.getElementById('themeBtn');
+    if (!btn) return;
+    btn.textContent = this.theme === 'light' ? '🌙' : '☀️';
+    btn.title = this.theme === 'light' ? this.t('themeLight') : this.t('themeDark');
+  }
+
+  toggleLang(): void {
+    this.lang = this.lang === 'zh' ? 'en' : 'zh';
+    localStorage.setItem('exec-stream-lang', this.lang);
+    this.applyLang();
+    this.renderTabs();
+    this.renderActiveTab();
+  }
+
+  applyLang(): void {
+    document.documentElement.lang = this.lang === 'zh' ? 'zh-CN' : 'en';
+    document.title = this.t('pageTitle');
+
+    const title = document.querySelector('.header h1');
+    if (title) title.textContent = this.t('title');
+
+    const langBtn = document.getElementById('langBtn');
+    if (langBtn) langBtn.textContent = this.lang === 'zh' ? 'EN' : '中文';
+
+    this.historyBtn.textContent = this.t('historyBtn');
+    this.authTitle.textContent = this.t('authTitle');
+    this.authHint.textContent = this.t('authHint');
+    if (!this.copyBtn.dataset.copied) {
+      this.copyBtn.textContent = this.t('authCopy');
+    }
+    this.addTabBtn.textContent = this.t('tabAdd');
+    this.applyTheme();
+
+    const currentStatus = this.statusText.dataset.statusKey;
+    if (currentStatus) this.statusText.textContent = this.t(currentStatus);
+
+    const toggleButtons = document.querySelectorAll<HTMLButtonElement>('.toggle-btn[data-lines]');
+    toggleButtons.forEach((btn) => {
+      const expanded = btn.dataset.expanded === 'true';
+      const lineCount = Number(btn.dataset.lines || 0);
+      btn.textContent = expanded ? this.t('collapse') : this.t('expandAll', { count: lineCount });
+    });
+  }
+
+  scrollToBottom(): void {
+    this.terminal.scrollTop = this.terminal.scrollHeight;
+  }
+
   escapeHtml(text: string): string {
     const div = document.createElement('div');
     div.textContent = text;
@@ -470,3 +1061,7 @@ class ExecStreamClient {
 }
 
 window.execStreamClient = new ExecStreamClient();
+window.copyAuthCode = () => window.execStreamClient?.copyAuthCode();
+window.toggleTheme = () => window.execStreamClient?.toggleTheme();
+window.toggleLang = () => window.execStreamClient?.toggleLang();
+window.loadHistory = async () => { await window.execStreamClient?.loadHistory(); };

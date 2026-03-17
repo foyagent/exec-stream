@@ -57,6 +57,7 @@
   "scripts": {
     "prepare": "echo 'OpenClaw plugin ready'",
     "build": "tsc",
+    "build:web": "tsc web/app.ts --target ES2020 --module none --lib DOM,DOM.Iterable,ES2020 --skipLibCheck --outFile web/app.js",
     "build:cli": "tsc && chmod +x dist/cli.js",
     "build:standalone": "tsc -p tsconfig.build.json",
     "start": "node dist/standalone.js",

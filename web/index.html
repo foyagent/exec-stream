@@ -51,13 +51,19 @@
 
     .header {
       background: var(--panel);
-      padding: 12px 20px;
+      padding: 12px 20px 10px;
       border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .header-top {
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 16px;
-      transition: background 0.2s ease, border-color 0.2s ease;
     }
 
     .header h1 {
@@ -74,10 +80,14 @@
       justify-content: flex-end;
     }
 
-    button {
+    button,
+    input {
       font-family: inherit;
+    }
+
+    button {
       cursor: pointer;
-      transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+      transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
     }
 
     .history-btn {
@@ -95,19 +105,23 @@
     }
 
     .theme-btn,
-    .lang-btn {
+    .lang-btn,
+    .tab-add-btn {
       min-width: 44px;
       background: var(--bg-elevated);
       color: var(--text);
       border: 1px solid var(--border);
       padding: 6px 12px;
-      border-radius: 4px;
+      border-radius: 8px;
       font-size: 13px;
     }
 
     .theme-btn:hover,
     .lang-btn:hover,
-    .toggle-btn:hover {
+    .toggle-btn:hover,
+    .tab-add-btn:hover,
+    .tab-button:hover,
+    .tab-close:hover {
       background: var(--panel-hover);
     }
 
@@ -117,6 +131,8 @@
       gap: 8px;
       color: var(--muted);
       font-size: 12px;
+      min-width: 98px;
+      justify-content: flex-end;
     }
 
     .status-dot {
@@ -129,19 +145,108 @@
     .status-dot.connected { background: var(--success); }
     .status-dot.waiting { background: #e2c08d; }
 
+    .tabs-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 42px;
+    }
+
+    .tabs-list {
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      flex: 1;
+      scrollbar-width: thin;
+    }
+
+    .tab-item {
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+      transition: transform 0.15s ease, border-color 0.2s ease, background 0.2s ease;
+    }
+
+    .tab-item:hover {
+      transform: translateY(-1px);
+    }
+
+    .tab-item.active {
+      border-color: var(--accent);
+      background: rgba(78, 201, 176, 0.14);
+    }
+
+    :root[data-theme="light"] .tab-item.active {
+      background: rgba(15, 123, 108, 0.12);
+    }
+
+    .tab-button {
+      max-width: 220px;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      padding: 9px 12px;
+      border-radius: 10px 0 0 10px;
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .tab-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .tab-input {
+      width: 160px;
+      max-width: 100%;
+      background: transparent;
+      color: var(--text);
+      border: none;
+      outline: none;
+      font-size: 13px;
+    }
+
+    .tab-close {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      width: 28px;
+      height: 28px;
+      margin-right: 6px;
+      border-radius: 999px;
+      font-size: 18px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .tab-close:hover {
+      color: var(--danger);
+    }
+
     .auth-container {
       display: none;
-      flex: 1;
       align-items: center;
       justify-content: center;
       background: var(--bg);
       padding: 24px;
+      border-bottom: 1px solid var(--border);
     }
 
     .auth-box {
       width: min(520px, 100%);
       background: var(--panel);
-      padding: 36px;
+      padding: 32px;
       border-radius: 12px;
       text-align: center;
       box-shadow: 0 10px 30px var(--shadow);
@@ -244,8 +349,12 @@
       margin-bottom: 8px;
     }
 
-    @media (max-width: 780px) {
-      .header {
+    .empty-state {
+      padding: 16px 0;
+    }
+
+    @media (max-width: 900px) {
+      .header-top {
         flex-direction: column;
         align-items: stretch;
       }
@@ -253,24 +362,63 @@
       .header-actions {
         justify-content: space-between;
       }
+    }
 
-      .status {
-        margin-left: auto;
+    @media (max-width: 640px) {
+      .header {
+        padding: 10px 12px 8px;
+      }
+
+      .tabs-bar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .tabs-list {
+        width: 100%;
+      }
+
+      .tab-item {
+        min-width: 160px;
+      }
+
+      .tab-button {
+        max-width: none;
+        flex: 1;
+      }
+
+      .tab-add-btn {
+        width: 100%;
+      }
+
+      .terminal {
+        padding: 14px 12px 20px;
+      }
+
+      .auth-box {
+        padding: 24px 18px;
       }
     }
   </style>
 </head>
 <body>
   <div class="header">
-    <h1>🖥️ Exec Stream</h1>
-    <div class="header-actions">
-      <button class="history-btn" id="historyBtn" onclick="loadHistory()">📜 历史命令</button>
-      <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">☀️</button>
-      <button class="lang-btn" id="langBtn" onclick="toggleLang()">EN</button>
-      <div class="status">
-        <div class="status-dot" id="statusDot"></div>
-        <span id="statusText">未连接</span>
+    <div class="header-top">
+      <h1>🖥️ Exec Stream</h1>
+      <div class="header-actions">
+        <button class="history-btn" id="historyBtn" onclick="loadHistory()">📜 历史命令</button>
+        <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">☀️</button>
+        <button class="lang-btn" id="langBtn" onclick="toggleLang()">EN</button>
+        <div class="status">
+          <div class="status-dot" id="statusDot"></div>
+          <span id="statusText">未连接</span>
+        </div>
       </div>
+    </div>
+
+    <div class="tabs-bar">
+      <div class="tabs-list" id="tabList"></div>
+      <button class="tab-add-btn" id="addTabBtn" type="button">+ 新建</button>
     </div>
   </div>
 
@@ -278,7 +426,7 @@
     <div class="auth-box">
       <div class="auth-title" id="authTitle">请授权访问</div>
       <div class="auth-code" id="authCode">------</div>
-      <button class="copy-btn" onclick="copyAuthCode()">📋 复制授权口令</button>
+      <button class="copy-btn" id="copyBtn" type="button" onclick="copyAuthCode()">📋 复制授权口令</button>
       <div class="auth-hint" id="authHint">将授权口令发送给 OpenClaw 完成授权</div>
     </div>
   </div>
