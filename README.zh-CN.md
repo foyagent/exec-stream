@@ -2,41 +2,41 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-Exec Stream is an OpenClaw plugin plus a standalone relay server for streaming `exec` activity to a browser UI in real time.
+Exec Stream 是一个 OpenClaw 插件，同时也是一个独立的 relay server，用于将 `exec` 活动实时流式传输到浏览器 UI。
 
-## Features
+## 特性
 
-- Real-time command start, output, and completion events
-- OpenClaw plugin mode: `local` or `remote`
-- Standalone Node.js server entrypoint
-- Browser auth flow with one-time code + JWT token
-- Deployment templates for Docker, PM2, and systemd
-- CLI installer for writing `exec-stream` config into `~/.openclaw/openclaw.json`
+- 实时命令启动、输出和完成事件
+- OpenClaw 插件模式：`local` 或 `remote`
+- 独立的 Node.js server 入口
+- 使用一次性验证码 + JWT token 的浏览器认证流程
+- 提供 Docker、PM2 和 systemd 的部署模板
+- CLI 安装器，可将 `exec-stream` 配置写入 `~/.openclaw/openclaw.json`
 
-## Quick Start
+## 快速开始
 
-### Install package
+### 安装包
 
 ```bash
 npm install
 npm run build
 ```
 
-### Install into OpenClaw config
+### 安装到 OpenClaw 配置中
 
-Local mode:
+本地模式：
 
 ```bash
 npx . install --mode local --port 9200
 ```
 
-Remote mode:
+远程模式：
 
 ```bash
 npx . install --mode remote --server https://nas.local:9200 [--token your-token]
 ```
 
-### Start standalone server
+### 启动独立服务器
 
 ```bash
 npm run build:standalone
@@ -46,13 +46,13 @@ EXEC_STREAM_REMOTE_TOKEN=remote-secret \
 npm run start:standalone
 ```
 
-Then open `http://localhost:9200/exec-stream`.
+然后打开 `http://localhost:9200/exec-stream`。
 
-## Installation Modes
+## 安装模式
 
-### 1) As an OpenClaw plugin: local mode
+### 1）作为 OpenClaw 插件：本地模式
 
-In local mode, the OpenClaw plugin starts the embedded HTTP/WebSocket server directly.
+在本地模式下，OpenClaw 插件会直接启动内嵌的 HTTP/WebSocket 服务器。
 
 ```json
 {
@@ -71,9 +71,9 @@ In local mode, the OpenClaw plugin starts the embedded HTTP/WebSocket server dir
 }
 ```
 
-### 2) As an OpenClaw plugin: remote mode
+### 2）作为 OpenClaw 插件：远程模式
 
-In remote mode, OpenClaw only forwards exec events and auth verification requests to a remote Exec Stream server.
+在远程模式下，OpenClaw 只会将 exec 事件和认证验证请求转发到远程 Exec Stream 服务器。
 
 ```json
 {
@@ -93,7 +93,7 @@ In remote mode, OpenClaw only forwards exec events and auth verification request
 }
 ```
 
-## Standalone Deployment
+## 独立部署
 
 ### Node.js / npx
 
@@ -103,12 +103,12 @@ npm run build:standalone
 EXEC_STREAM_PORT=9200 EXEC_STREAM_JWT_SECRET=change-me EXEC_STREAM_REMOTE_TOKEN=remote-secret npm run start:standalone
 ```
 
-Environment variables:
+环境变量：
 
-- `EXEC_STREAM_PORT` - listen port, default `9200`
-- `EXEC_STREAM_JWT_SECRET` - JWT signing secret
-- `EXEC_STREAM_TOKEN_EXPIRY` - token lifetime in seconds, default `172800`
-- `EXEC_STREAM_REMOTE_TOKEN` - optional bearer token required for remote event ingestion
+- `EXEC_STREAM_PORT` - 监听端口，默认 `9200`
+- `EXEC_STREAM_JWT_SECRET` - JWT 签名密钥
+- `EXEC_STREAM_TOKEN_EXPIRY` - token 有效期（秒），默认 `172800`
+- `EXEC_STREAM_REMOTE_TOKEN` - 可选，用于远程事件接收的 bearer token
 
 ### Docker
 
@@ -122,7 +122,7 @@ docker run -p 9200:9200 \
   exec-stream
 ```
 
-Docker Compose example:
+Docker Compose 示例：
 
 ```yaml
 services:
@@ -149,7 +149,7 @@ pm2 save
 
 ### systemd
 
-Copy `exec-stream.service` to `/etc/systemd/system/exec-stream.service`, adjust `WorkingDirectory`, `ExecStart`, `User`, and secrets, then:
+将 `exec-stream.service` 复制到 `/etc/systemd/system/exec-stream.service`，调整 `WorkingDirectory`、`ExecStart`、`User` 和密钥后，执行：
 
 ```bash
 sudo systemctl daemon-reload
@@ -159,7 +159,7 @@ sudo systemctl status exec-stream
 
 ## CLI
 
-### Install command
+### 安装命令
 
 ```bash
 npx openclaw-exec-stream install --mode local --port 9200
@@ -167,45 +167,45 @@ npx openclaw-exec-stream install --mode remote --server https://nas.local:9200 [
 npx openclaw-exec-stream install --help
 ```
 
-What it does:
+它会执行以下操作：
 
-- Detects the OpenClaw config path (default `~/.openclaw/openclaw.json`)
-- Reads existing JSON config if present
-- Adds `exec-stream` to `plugins.allow`
-- Adds or updates `plugins.entries["exec-stream"]`
-- Prints the resulting plugin snippet and next steps
+- 检测 OpenClaw 配置路径（默认 `~/.openclaw/openclaw.json`）
+- 如果存在则读取现有 JSON 配置
+- 将 `exec-stream` 添加到 `plugins.allow`
+- 添加或更新 `plugins.entries["exec-stream"]`
+- 输出最终的插件配置片段和后续步骤
 
-### CLI options
+### CLI 选项
 
-- `--mode <local|remote>` required
-- `--port <number>` local mode only
-- `--server <url>` remote mode only
-- `--token <token>` optional remote bearer token for server-to-server requests
-- `--config <path>` optional explicit config path
-- `-h, --help` show help
+- `--mode <local|remote>` 必填
+- `--port <number>` 仅用于本地模式
+- `--server <url>` 仅用于远程模式
+- `--token <token>` 可选，用于 server-to-server 请求的远程 bearer token
+- `--config <path>` 可选，显式指定配置路径
+- `-h, --help` 显示帮助
 
-## Configuration Reference
+## 配置参考
 
-Plugin config keys:
+插件配置项：
 
-- `mode`: `local` or `remote`
-- `port`: local HTTP/WebSocket port
-- `remoteServer`: remote server base URL
-- `remoteToken`: optional remote bearer token
-- `jwtSecret`: JWT signing secret for local server / standalone server
-- `tokenExpiry`: JWT lifetime in seconds
+- `mode`: `local` 或 `remote`
+- `port`: 本地 HTTP/WebSocket 端口
+- `remoteServer`: 远程服务器基础 URL
+- `remoteToken`: 可选的远程 bearer token
+- `jwtSecret`: 本地服务器 / 独立服务器使用的 JWT 签名密钥
+- `tokenExpiry`: JWT 有效期（秒）
 
 ## API
 
 ### `GET /exec-stream/health`
-Returns service health:
+返回服务健康状态：
 
 ```json
 { "status": "ok" }
 ```
 
 ### `GET /exec-stream/auth/code`
-Creates a one-time auth code:
+创建一次性认证码：
 
 ```json
 {
@@ -216,18 +216,18 @@ Creates a one-time auth code:
 ```
 
 ### `POST /exec-stream/auth/verify`
-Verifies an auth code and returns a JWT token.
+验证认证码并返回 JWT token。
 
 ### `GET /exec-stream/auth/status?deviceId=...`
-Checks whether a device has already been authorized.
+检查设备是否已完成授权。
 
 ### `POST /exec-stream/api/events`
-Receives forwarded exec events in remote mode. Requires `Authorization: Bearer <token>` when `remoteToken` is configured.
+在远程模式下接收转发的 exec 事件。当配置了 `remoteToken` 时，需要 `Authorization: Bearer <token>`。
 
 ### `GET /exec-stream/commands`
-Returns the latest cached command summary list.
+返回最新缓存的命令摘要列表。
 
-## Development
+## 开发
 
 ```bash
 npm install
@@ -235,7 +235,7 @@ npm run build
 node dist/cli.js install --help
 ```
 
-Project layout:
+项目结构：
 
 ```text
 src/
@@ -247,7 +247,7 @@ src/
 └── types.ts
 ```
 
-## Examples
+## 示例
 
 - `examples/openclaw.local.json`
 - `examples/openclaw.remote.json`
